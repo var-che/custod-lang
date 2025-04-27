@@ -1,0 +1,14 @@
+[workspace]
+members = [ "back_end",
+    "front_end"
+, "middle_end"]
+[workspace.package]
+version = "0.18.1" # VERSION
+rust-version = "1.78"
+
+[profile.release]
+panic = "abort"
+
+[profile.release-debug]
+inherits = "release"
+debug = true

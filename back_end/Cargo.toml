@@ -1,0 +1,8 @@
+[package]
+name = "back_end"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+inkwell = { git = "https://github.com/TheDan64/inkwell.git", rev = "caabaa5a8e05c52c531f9a0df784ac5651434803", features = ["llvm18-0", "llvm18-0-prefer-static"] }
+middle_end = { path = "../middle_end" }
