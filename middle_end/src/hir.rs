@@ -115,48 +115,57 @@ pub fn convert_to_hir(ast: Statement) -> HirProgram {
     };
 
     match ast {
-        Statement::Declaration(var_decl) => {
-            // we are converting AST variable declaration to HIR
-            let hir_val = HirVariable {
-                name: var_decl.name,
+        Statement::Declaration { name, permissions, initializer } => {
+            // Convert AST declaration to HIR
+            let hir_var = HirVariable {
+                name,
                 typ: Type::I64,
-                permissions: PermissionInfo::new(vec![var_decl.permission]),
-                initializer: match var_decl.initializer {
-                    Expression::Number(n) => Some(HirValue::Number(n, Type::I64)),
-                    Expression::Binary { left, operator, right } => Some(HirValue::Binary {
-                        left: Box::new(match *left {
-                            Expression::Number(n) => HirValue::Number(n, Type::I64),
-                            Expression::Identifier(name) => HirValue::Variable(name, Type::I64),
-                            _ => panic!("Invalid left operand"),
-                        }),
-                        operator,  // Using TokenType directly
-                        right: Box::new(match *right {
-                            Expression::Number(n) => HirValue::Number(n, Type::I64),
-                            Expression::Identifier(name) => HirValue::Variable(name, Type::I64),
-                            _ => panic!("Invalid right operand"),
-                        }),
-                        result_type: Type::I64,
-                    }),
-                    Expression::Identifier(name) => Some(HirValue::Variable(name, Type::I64)),
-                    _ => None,
-                },
+                permissions: PermissionInfo::new(
+                    permissions.into_iter()
+                        .filter_map(|t| match t {
+                            TokenType::Read => Some(PermissionType::Read),
+                            TokenType::Write => Some(PermissionType::Write),
+                            TokenType::Reads => Some(PermissionType::Reads),
+                            TokenType::Writes => Some(PermissionType::Writes),
+                            _ => None
+                        })
+                        .collect()
+                ),
+                initializer: initializer.map(|expr| convert_expression(expr)),
             };
 
-            // we are trackign type information
-            type_info.variables.insert(hir_val.name.clone(), hir_val.typ.clone());
-
-            statements.push(HirStatement::Declaration(hir_val))
+            type_info.variables.insert(hir_var.name.clone(), hir_var.typ.clone());
+            statements.push(HirStatement::Declaration(hir_var));
+        },
+        Statement::Assignment { target, value } => {
+            let hir_assignment = HirAssignment {
+                target,
+                value: convert_expression(value),
+                permissions_used: vec![PermissionType::Write],
+            };
+            statements.push(HirStatement::Assignment(hir_assignment));
+        },
+        Statement::Print(expr) => {
+            statements.push(HirStatement::Print(convert_expression(expr)));
         }
-        Statement::Expression(expr) => {
-            // Handle expression statements if needed
-            // Currently just ignoring expressions
-        }
-        
     }
+
     HirProgram {
         statements,
         type_info,
+    }
+}
 
+fn convert_expression(expr: Expression) -> HirValue {
+    match expr {
+        Expression::Number(n) => HirValue::Number(n, Type::I64),
+        Expression::Binary { left, operator, right } => HirValue::Binary {
+            left: Box::new(convert_expression(*left)),
+            operator,
+            right: Box::new(convert_expression(*right)),
+            result_type: Type::I64,
+        },
+        Expression::Variable(name) => HirValue::Variable(name, Type::I64),
     }
 }
 
