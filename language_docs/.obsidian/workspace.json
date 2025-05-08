@@ -6,7 +6,7 @@
       {
         "id": "7697e3a876e32850",
         "type": "tabs",
-        "dimension": 43.284789644012946,
+        "dimension": 50,
         "children": [
           {
             "id": "5db94c16593c4362",
@@ -14,36 +14,51 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "permissions/reads write.md",
+                "file": "Beginning.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "reads write"
-            },
-            "group": "a36a0fca634971bb"
-          }
-        ]
-      },
-      {
-        "id": "0c6567c0160f0e29",
-        "type": "tabs",
-        "dimension": 56.715210355987054,
-        "children": [
+              "title": "Beginning"
+            }
+          },
           {
-            "id": "ed9927eb2b88a918",
+            "id": "0c417536e298b43b",
             "type": "leaf",
             "state": {
               "type": "markdown",
               "state": {
-                "file": "permissions/reads write.md",
+                "file": "Methods and behaviours.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Methods and behaviours"
+            },
+            "group": "64a92c47f4718622"
+          }
+        ],
+        "currentTab": 1
+      },
+      {
+        "id": "4189cf66de3d3fa9",
+        "type": "tabs",
+        "dimension": 50,
+        "children": [
+          {
+            "id": "3db90b367ac842f4",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Methods and behaviours.md",
                 "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "reads write"
+              "title": "Methods and behaviours"
             },
-            "group": "a36a0fca634971bb"
+            "group": "64a92c47f4718622"
           }
         ]
       }
@@ -193,9 +208,10 @@
       "command-palette:Open command palette": false
     }
   },
-  "active": "5db94c16593c4362",
+  "active": "3db90b367ac842f4",
   "lastOpenFiles": [
     "Beginning.md",
+    "Methods and behaviours.md",
     "permissions/reads write.md",
     "Actor.md",
     "compiler/Parser Implementation Details.md",

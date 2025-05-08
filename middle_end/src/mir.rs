@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
 use crate::hir::{HirProgram, HirStatement, HirValue};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MirValue {
     Number(i64),
-    Reference(String),
-    Temporary(usize)
+    Temporary(usize),
+    Variable(String),    // For named variables like "counter"
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -54,32 +52,40 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
                     reference: var.name.clone()
                 });
 
+                // Add initial store for the variable
                 if let Some(init) = &var.initializer {
                     match init {
+                        HirValue::Number(n, _) => {
+                            // Store the number directly
+                            mir.instructions.push(MirInstruction::Store {
+                                target: var.name.clone(),
+                                value: MirValue::Number(*n),
+                            });
+                        },
                         HirValue::Binary { left, right, operator, result_type } => {
                             // Load left operand
                             mir.instructions.push(MirInstruction::Load {
                                 target: temp_counter,
-                                value: MirValue::Number(2) // Hardcoded for now
+                                value: convert_hir_value(left),
                             });
                             
                             // Load right operand
                             mir.instructions.push(MirInstruction::Load {
                                 target: temp_counter + 1,
-                                value: MirValue::Number(2) // Hardcoded for now
+                                value: convert_hir_value(right),
                             });
                             
                             // Add them
                             mir.instructions.push(MirInstruction::Add {
                                 target: temp_counter + 2,
                                 left: MirValue::Temporary(temp_counter),
-                                right: MirValue::Temporary(temp_counter + 1)
+                                right: MirValue::Temporary(temp_counter + 1),
                             });
                             
                             // Store result
                             mir.instructions.push(MirInstruction::Store {
                                 target: var.name.clone(),
-                                value: MirValue::Temporary(temp_counter + 2)
+                                value: MirValue::Temporary(temp_counter + 2),
                             });
                             
                             temp_counter += 3;
@@ -97,7 +103,7 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
                 // Handle +=
                 mir.instructions.push(MirInstruction::Load {
                     target: temp_counter,
-                    value: MirValue::Reference(assign.target.clone())
+                    value: MirValue::Variable(assign.target.clone())
                 });
                 
                 mir.instructions.push(MirInstruction::Add {
@@ -120,7 +126,7 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
                         reference: name.clone()
                     });
                     mir.instructions.push(MirInstruction::Print {
-                        value: MirValue::Reference(name.clone())
+                        value: MirValue::Variable(name.clone())
                     });
                 }
             }
@@ -128,4 +134,13 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
         }
     }
     mir
+}
+
+// Helper function to convert HIR values to MIR values
+fn convert_hir_value(value: &HirValue) -> MirValue {
+    match value {
+        HirValue::Number(n, _) => MirValue::Number(*n),
+        HirValue::Variable(name, _) => MirValue::Variable(name.clone()),
+        _ => panic!("Unsupported HIR value type"),
+    }
 }

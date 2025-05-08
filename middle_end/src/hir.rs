@@ -1,11 +1,8 @@
 use front_end::ast::{Statement, Expression};
+use front_end::types::Type;
 use front_end::token::{PermissionType, TokenType};
+use front_end::types::Permission;
 use std::collections::HashMap;
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Type {
-    I64,
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum HirValue {
@@ -23,11 +20,16 @@ pub enum HirValue {
 #[derive(Debug, PartialEq, Clone)]
 pub enum HirStatement {
     Declaration(HirVariable),
-    Function(HirFunction),
-    Handler(HirHandler),
+    Method(HirMethod),         // Changed from Function/Handler
     Assignment(HirAssignment),
     Actor(HirActor),
-    Print(HirValue),  // Add Print variant that takes a value to print
+    Print(HirValue),
+    AtomicBlock(Vec<HirStatement>),
+    ActorCall {
+        actor: String,
+        behavior: String,
+        arguments: Vec<HirValue>,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -47,11 +49,20 @@ pub struct PermissionInfo {
 
 impl PermissionInfo {
     pub fn new(permissions: Vec<PermissionType>) -> Self {
-        Self {
+        // Check for invalid permission combinations
+        let mut info = Self {
             permissions,
             is_isolated: true,
             is_sendable: true,
+        };
+
+        // Update isolation based on permissions
+        if info.permissions.contains(&PermissionType::Reads) ||
+           info.permissions.contains(&PermissionType::Writes) {
+            info.is_isolated = false;
         }
+
+        info
     }
 
     #[allow(dead_code)]
@@ -115,20 +126,13 @@ pub fn convert_to_hir(ast: Statement) -> HirProgram {
     };
 
     match ast {
-        Statement::Declaration { name, permissions, initializer } => {
-            // Convert AST declaration to HIR
+        Statement::Declaration { name, typ, initializer } => {
             let hir_var = HirVariable {
                 name,
-                typ: Type::I64,
+                typ: typ.base_type,
                 permissions: PermissionInfo::new(
-                    permissions.into_iter()
-                        .filter_map(|t| match t {
-                            TokenType::Read => Some(PermissionType::Read),
-                            TokenType::Write => Some(PermissionType::Write),
-                            TokenType::Reads => Some(PermissionType::Reads),
-                            TokenType::Writes => Some(PermissionType::Writes),
-                            _ => None
-                        })
+                    typ.permissions.into_iter()
+                        .map(Into::into)
                         .collect()
                 ),
                 initializer: initializer.map(|expr| convert_expression(expr)),
@@ -137,17 +141,38 @@ pub fn convert_to_hir(ast: Statement) -> HirProgram {
             type_info.variables.insert(hir_var.name.clone(), hir_var.typ.clone());
             statements.push(HirStatement::Declaration(hir_var));
         },
-        Statement::Assignment { target, value } => {
-            let hir_assignment = HirAssignment {
-                target,
-                value: convert_expression(value),
-                permissions_used: vec![PermissionType::Write],
-            };
-            statements.push(HirStatement::Assignment(hir_assignment));
-        },
+        Statement::Assignment { target, value, target_type } => {
+                let hir_assignment = HirAssignment {
+                    target,
+                    value: convert_expression(value),
+                    permissions_used: vec![PermissionType::Write],
+                };
+                statements.push(HirStatement::Assignment(hir_assignment));
+            },
         Statement::Print(expr) => {
-            statements.push(HirStatement::Print(convert_expression(expr)));
-        }
+                statements.push(HirStatement::Print(convert_expression(expr)));
+            },
+        Statement::Actor { .. } => {
+                statements.push(HirStatement::Actor(convert_actor(ast)));
+            },
+        Statement::Function { .. } => {
+                statements.push(HirStatement::Method(convert_method(ast)));
+            },
+        Statement::AtomicBlock(block_stmts) => {
+                statements.push(HirStatement::AtomicBlock(
+                    block_stmts.into_iter()
+                        .map(|s| convert_statement(s))
+                        .collect()
+                ));
+            },
+        Statement::Block(block_statements) => {
+            // Convert each statement in the block
+            for stmt in block_statements {
+                let hir = convert_to_hir(stmt);
+                statements.extend(hir.statements);
+                type_info.variables.extend(hir.type_info.variables);
+            }
+        },
     }
 
     HirProgram {
@@ -184,6 +209,211 @@ fn convert_statements(statements: Vec<Statement>) -> HirProgram {
     program
 }
 
+fn convert_actor(ast: Statement) -> HirActor {
+    match ast {
+        Statement::Actor { name, state, methods, behaviors } => {
+            HirActor {
+                name,
+                state: state.into_iter()
+                    .map(|v| convert_variable(v))
+                    .collect(),
+                methods: methods.into_iter()
+                    .map(|m| convert_method(m))
+                    .collect(),
+                behaviors: behaviors.into_iter()
+                    .map(|b| convert_behavior(b))
+                    .collect(),
+            }
+        },
+        _ => panic!("Expected actor declaration"),
+    }
+}
+
+fn convert_method(method: Statement) -> HirMethod {
+    match method {
+        Statement::Function { name, params, body, return_type, is_behavior } => {
+            let converted_params = params.into_iter()
+                .map(|(name, typ)| HirVariable {
+                    name,
+                    typ: typ.base_type,
+                    permissions: PermissionInfo::new(
+                        typ.permissions.into_iter()
+                            .map(PermissionType::from)
+                            .collect()
+                    ),
+                    initializer: None,
+                })
+                .collect();
+
+            HirMethod {
+                name,
+                kind: if is_behavior { MethodKind::Behavior } else { MethodKind::Regular },
+                params: converted_params,
+                body: body.into_iter()
+                    .map(|s| convert_statement(s))
+                    .collect(),
+                return_type: return_type.map(|t| t.base_type),
+                used_permissions: Vec::new(),
+            }
+        },
+        _ => panic!("Expected method declaration"),
+    }
+}
+
+fn convert_behavior(behavior: Statement) -> HirBehavior {
+    match behavior {
+        Statement::Function { name, params, body, is_behavior, .. } => {
+            if !is_behavior {
+                panic!("Expected behavior but got regular method");
+            }
+
+            let converted_params = params.into_iter()
+                .map(|(name, typ)| HirVariable {
+                    name,
+                    typ: typ.base_type,
+                    permissions: PermissionInfo::new(
+                        typ.permissions.into_iter()
+                            .map(PermissionType::from)
+                            .collect()
+                    ),
+                    initializer: None,
+                })
+                .collect();
+
+            let converted_body: Vec<HirStatement> = body.into_iter()
+                .map(|s| convert_statement(s))
+                .collect();
+
+            let atomic_blocks = extract_atomic_blocks_from_statements(&converted_body);
+
+            HirBehavior {
+                name,
+                params: converted_params,
+                body: converted_body,
+                atomic_blocks,
+            }
+        },
+        _ => panic!("Expected behavior declaration"),
+    }
+}
+
+// Helper function to extract atomic blocks from HirStatements
+fn extract_atomic_blocks_from_statements(statements: &[HirStatement]) -> Vec<Vec<HirStatement>> {
+    statements.iter()
+        .filter_map(|stmt| {
+            if let HirStatement::AtomicBlock(block) = stmt {
+                Some(block.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+// Fix convert_variable to handle both tuple and Statement forms
+fn convert_variable(var: impl Into<VariableDecl>) -> HirVariable {
+    match var.into() {
+        VariableDecl::Tuple((name, permissions)) => {
+            HirVariable {
+                name,
+                typ: Type::I64,
+                permissions: PermissionInfo::new(
+                    permissions.into_iter()
+                        .filter_map(|t| match t {
+                            TokenType::Read => Some(PermissionType::Read),
+                            TokenType::Write => Some(PermissionType::Write),
+                            TokenType::Reads => Some(PermissionType::Reads),
+                            TokenType::Writes => Some(PermissionType::Writes),
+                            _ => None
+                        })
+                        .collect()
+                ),
+                initializer: None,
+            }
+        },
+        VariableDecl::Statement(Statement::Declaration { name, typ, initializer }) => {
+            HirVariable {
+                name,
+                typ: typ.base_type,
+                permissions: PermissionInfo::new(
+                    typ.permissions.into_iter()
+                        .map(PermissionType::from)
+                        .collect()
+                ),
+                initializer: initializer.map(|expr| convert_expression(expr)),
+            }
+        },
+        _ => panic!("Expected variable declaration"),
+    }
+}
+
+// Add helper enum for variable declaration conversion
+enum VariableDecl {
+    Tuple((String, Vec<TokenType>)),
+    Statement(Statement),
+}
+
+impl From<(String, Vec<TokenType>)> for VariableDecl {
+    fn from(tuple: (String, Vec<TokenType>)) -> Self {  // Fixed parenthesis placement
+        VariableDecl::Tuple(tuple)
+    }
+}
+
+impl From<Statement> for VariableDecl {
+    fn from(stmt: Statement) -> Self {
+        VariableDecl::Statement(stmt)
+    }
+}
+
+
+
+
+
+
+
+// Fix convert_statement to use the correct convert_variable form
+fn convert_statement(stmt: Statement) -> HirStatement {
+    match stmt {
+        Statement::Declaration { .. } => 
+            HirStatement::Declaration(convert_variable(stmt)),
+        Statement::Assignment { target, value, target_type } => 
+            HirStatement::Assignment(HirAssignment {
+                target,
+                value: convert_expression(value),
+                permissions_used: vec![PermissionType::Write],
+            }),
+        Statement::Print(expr) => 
+            HirStatement::Print(convert_expression(expr)),
+        Statement::AtomicBlock(stmts) =>
+            HirStatement::AtomicBlock(
+                stmts.into_iter()
+                    .map(|s| convert_statement(s))
+                    .collect()
+            ),
+        Statement::Function { .. } =>
+            HirStatement::Method(convert_method(stmt)),
+        _ => panic!("Unexpected statement type"),
+    }
+}
+
+// Add helper function for atomic blocks
+fn extract_atomic_blocks(statements: &[Statement]) -> Vec<Vec<HirStatement>> {
+    let mut atomic_blocks = Vec::new();
+    
+    for stmt in statements {
+        if let Statement::AtomicBlock(block_stmts) = stmt {
+            atomic_blocks.push(
+                block_stmts.iter()
+                    .cloned()
+                    .map(|s| convert_statement(s))
+                    .collect()
+            );
+        }
+    }
+    
+    atomic_blocks
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeEnvironment {
     variables: HashMap<String, Type>
@@ -199,9 +429,10 @@ impl Default for TypeEnvironment {
 
 pub struct PermissionChecker {
     // Track variable permissions
-    permissions: HashMap<String, PermissionInfo>,
+    pub(crate) permissions: HashMap<String, PermissionInfo>,
 }
 
+// Fix PermissionChecker's actor check
 impl PermissionChecker {
     pub fn check_program(program: &HirProgram) -> Result<(), String> {
         let mut checker = PermissionChecker {
@@ -216,10 +447,17 @@ impl PermissionChecker {
                         var.permissions.check_permission_combination()?;
                     }
                     
-                    // Check function permissions
-                    for func in &actor.functions {
-                        for perm in &func.used_permissions {
+                    // Check method permissions
+                    for method in &actor.methods {
+                        for perm in &method.used_permissions {
                             perm.check_permission_combination()?;
+                        }
+                    }
+
+                    // Check behavior permissions
+                    for behavior in &actor.behaviors {
+                        for stmt in &behavior.body {
+                            checker.check_statement(stmt)?;
                         }
                     }
                 }
@@ -280,6 +518,23 @@ impl PermissionChecker {
         Ok(())
     }
 
+    fn check_statement(&self, stmt: &HirStatement) -> Result<(), String> {
+        match stmt {
+            HirStatement::AtomicBlock(stmts) => {
+                for stmt in stmts {
+                    self.check_statement(stmt)?;
+                }
+                Ok(())
+            }
+            HirStatement::Declaration(_) => Ok(()),
+            HirStatement::Method(_) => Ok(()),
+            HirStatement::Assignment(_) => Ok(()),
+            HirStatement::Actor(_) => Ok(()),
+            HirStatement::Print(_) => Ok(()),
+            HirStatement::ActorCall { .. } => Ok(()),
+        }
+    }
+
     fn check_permissions(&self, value: &HirValue) -> Result<(), String> {
         match value {
             HirValue::Variable(name, _) => {
@@ -327,24 +582,34 @@ impl PermissionChecker {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct HirActor {
-    name: String,
-    state: Vec<HirVariable>,      // Actor's state (like counter)
-    functions: Vec<HirFunction>,  // Internal functions
-    handlers: Vec<HirHandler>,    // Message handlers (on)
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirFunction {
     pub name: String,
-    pub body: Vec<HirStatement>,
-    pub used_permissions: Vec<PermissionInfo>  // Tracks which actor state variables are used
+    pub state: Vec<HirVariable>,
+    pub methods: Vec<HirMethod>,     // Regular functions (fn)
+    pub behaviors: Vec<HirBehavior>, // Async behaviors (on)
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct HirHandler {
-    name: String,
-    params: Vec<HirVariable>,
-    body: Vec<HirStatement>
+pub enum MethodKind {
+    Regular,    // fn keyword
+    Behavior,   // on keyword
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct HirMethod {
+    pub name: String,
+    pub kind: MethodKind,
+    pub params: Vec<HirVariable>,
+    pub body: Vec<HirStatement>,
+    pub return_type: Option<Type>,
+    pub used_permissions: Vec<PermissionInfo>
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct HirBehavior {
+    pub name: String,
+    pub params: Vec<HirVariable>,
+    pub body: Vec<HirStatement>,
+    pub atomic_blocks: Vec<Vec<HirStatement>>,  // Track atomic blocks
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -353,3 +618,5 @@ pub struct HirAssignment {
     pub value: HirValue,
     pub permissions_used: Vec<PermissionType>
 }
+
+

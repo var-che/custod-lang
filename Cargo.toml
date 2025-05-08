@@ -1,5 +1,5 @@
 [workspace]
-members = [ "back_end",
+members = [  "compiler",
     "front_end"
 , "middle_end"]
 [workspace.package]
