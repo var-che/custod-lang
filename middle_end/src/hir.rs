@@ -4,16 +4,17 @@ use front_end::token::{PermissionType, TokenType};
 use front_end::types::Permission;
 use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HirValue {
     Number(i64, Type),
+    Variable(String, Type),
     Binary {
         left: Box<HirValue>,
         operator: TokenType,
         right: Box<HirValue>,
         result_type: Type,
     },
-    Variable(String, Type),
+    Clone(Box<HirValue>),
     Consume(Box<HirValue>),
 }
 
@@ -191,6 +192,11 @@ fn convert_expression(expr: Expression) -> HirValue {
             result_type: Type::I64,
         },
         Expression::Variable(name) => HirValue::Variable(name, Type::I64),
+        Expression::Clone(expr) => {
+            // Convert the inner expression and wrap it in Clone
+            let inner = convert_expression(*expr);
+            HirValue::Clone(Box::new(inner))
+        }
     }
 }
 
@@ -526,12 +532,16 @@ impl PermissionChecker {
                 }
                 Ok(())
             }
-            HirStatement::Declaration(_) => Ok(()),
+            HirStatement::Assignment(assign) => self.check_assignment(assign),
+            HirStatement::Declaration(var) => self.check_declaration(var),
             HirStatement::Method(_) => Ok(()),
-            HirStatement::Assignment(_) => Ok(()),
             HirStatement::Actor(_) => Ok(()),
-            HirStatement::Print(_) => Ok(()),
+            HirStatement::Print(value) => {
+                // Check read permissions for printed values
+                self.check_value_permissions(value)
+            }
             HirStatement::ActorCall { .. } => Ok(()),
+            _ => Ok(()),
         }
     }
 
@@ -578,6 +588,34 @@ impl PermissionChecker {
             _ => Ok(())
         }
     }
+
+    fn check_value_permissions(&self, value: &HirValue) -> Result<(), String> {
+        self.check_permissions(value)
+    }
+
+    fn check_declaration(&self, var: &HirVariable) -> Result<(), String> {
+        var.permissions.check_permission_combination()?;
+        if let Some(init) = &var.initializer {
+            self.check_permissions(init)?;
+        }
+        Ok(())
+    }
+
+    fn check_assignment(&self, assign: &HirAssignment) -> Result<(), String> {
+        // Check if we have write permission to the target
+        if let Some(target_perms) = self.permissions.get(&assign.target) {
+            if !target_perms.has_write_access() {
+                return Err(format!(
+                    "Cannot write to '{}' - need write permission",
+                    assign.target
+                ));
+            }
+            self.check_permissions(&assign.value)?;
+        } else {
+            return Err(format!("Variable '{}' not found", assign.target));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -617,6 +655,31 @@ pub struct HirAssignment {
     pub target: String,
     pub value: HirValue,
     pub permissions_used: Vec<PermissionType>
+}
+
+#[derive(Default)]
+pub struct HirConverter {
+    type_environment: TypeEnvironment,
+}
+
+impl HirConverter {
+    fn get_type(&self, name: &str) -> Type {
+        self.type_environment.variables.get(name)
+            .cloned()
+            .unwrap_or(Type::I64)
+    }
+
+    fn convert_expression(&mut self, expr: Expression) -> HirValue {
+        match expr {
+            Expression::Number(n) => HirValue::Number(n, Type::I64),
+            Expression::Variable(name) => HirValue::Variable(name.clone(), self.get_type(&name)),
+            Expression::Clone(expr) => {
+                let inner = self.convert_expression(*expr);
+                HirValue::Clone(Box::new(inner))
+            },
+            Expression::Binary { left, operator, right } => todo!(),
+        }
+    }
 }
 
 

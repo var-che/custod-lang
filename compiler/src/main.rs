@@ -7,7 +7,7 @@ fn main() -> Result<(), String> {
     // Sample program
     let source = r#"
         reads write counter = 1
-        counter += 1
+        counter += 13
         print counter
     "#;
 

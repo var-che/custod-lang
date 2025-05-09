@@ -4,12 +4,13 @@ use crate::types::PermissionedType;
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Number(i64),
+    Variable(String),
     Binary {
         left: Box<Expression>,
         operator: TokenType,
         right: Box<Expression>,
     },
-    Variable(String),
+    Clone(Box<Expression>),  // Add this variant
 }
 
 #[derive(Debug, Clone)]

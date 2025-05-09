@@ -44,18 +44,47 @@ impl Parser {
         let word = self.read_word();
 
         match word.as_str() {
-            "reads" => {
-                // Create permissions vector starting with reads
-                let mut permissions = vec![Permission::Reads];
+            "reads" | "read" => {
+                let mut permissions = vec![
+                    if word == "reads" { Permission::Reads } else { Permission::Read }
+                ];
                 
                 self.skip_whitespace();
-                
-                // Check for "write" permission
                 if self.peek_word() == "write" {
                     self.read_word(); // consume "write"
                     permissions.push(Permission::Write);
                 }
 
+                self.skip_whitespace();
+                let name = self.read_word();
+                
+                self.skip_whitespace();
+                if self.peek_char() != '=' {
+                    return Err(format!("Expected '=', found '{}'", self.peek_char()));
+                }
+                self.position += 1; // consume '='
+                
+                self.skip_whitespace();
+                
+                // Check for clone keyword
+                let initializer = if self.peek_word() == "clone" {
+                    self.read_word(); // consume "clone"
+                    self.skip_whitespace();
+                    Expression::Clone(Box::new(Expression::Variable(self.read_word())))
+                } else {
+                    self.parse_expression()?
+                };
+
+                Ok(Statement::Declaration {
+                    name,
+                    typ: PermissionedType::new(Type::I64, permissions),
+                    initializer: Some(initializer),
+                })
+            },
+            "write" => {
+                // Handle write-only variable declaration
+                let permissions = vec![Permission::Write];
+                
                 self.skip_whitespace();
                 let name = self.read_word();
                 
@@ -74,8 +103,13 @@ impl Parser {
                     initializer: Some(initializer),
                 })
             },
-            "counter" => {
-                // Handle counter += 1 case
+            "print" => {
+                self.skip_whitespace();
+                let expr = self.parse_expression()?;
+                Ok(Statement::Print(expr))
+            },
+            _ => {
+                // Handle any variable name for assignment
                 self.skip_whitespace();
                 if self.peek_char() == '+' && self.peek_next_char() == '=' {
                     self.position += 2; // skip +=
@@ -95,13 +129,7 @@ impl Parser {
                 } else {
                     Err(format!("Expected '+=', found '{}'", self.peek_char()))
                 }
-            },
-            "print" => {
-                self.skip_whitespace();
-                let expr = self.parse_expression()?;
-                Ok(Statement::Print(expr))
-            },
-            _ => Err(format!("Unexpected token: {}", word))
+            }
         }
     }
 

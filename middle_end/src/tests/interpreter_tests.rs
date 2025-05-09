@@ -103,3 +103,50 @@ fn test_multiple_variables() {
     interpreter.execute(&mir).expect("Execution failed");
     assert_eq!(interpreter.get_variable("sum"), Some(30));
 }
+
+#[test]
+fn test_add_larger_number() {
+    let mir = MirFunction {
+        instructions: vec![
+            // Initial write barrier
+            MirInstruction::WriteBarrier {
+                reference: "counter".to_string(),
+            },
+            // Store 1 in counter
+            MirInstruction::Store {
+                target: "counter".to_string(),
+                value: MirValue::Number(1),
+            },
+            // Load counter into temp 0
+            MirInstruction::Load {
+                target: 0,
+                value: MirValue::Variable("counter".to_string()),
+            },
+            // Add 13 to temp 0, store in temp 1
+            MirInstruction::Add {
+                target: 1,
+                left: MirValue::Temporary(0),
+                right: MirValue::Number(13),
+            },
+            // Store result back in counter
+            MirInstruction::Store {
+                target: "counter".to_string(),
+                value: MirValue::Temporary(1),
+            },
+            // Read barrier before print
+            MirInstruction::ReadBarrier {
+                reference: "counter".to_string(),
+            },
+            // Print the result
+            MirInstruction::Print {
+                value: MirValue::Variable("counter".to_string()),
+            },
+        ]
+    };
+
+    let mut interpreter = Interpreter::new();
+    interpreter.execute(&mir).expect("Execution failed");
+    
+    // Verify counter equals 14 (1 + 13)
+    assert_eq!(interpreter.get_variable("counter"), Some(14));
+}

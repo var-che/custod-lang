@@ -1,6 +1,7 @@
 use crate::mir::{MirFunction, MirInstruction, MirValue};
 use std::collections::HashMap;
 
+#[derive(Debug)] 
 pub struct Interpreter {
     variables: HashMap<String, i64>,
     temporaries: HashMap<usize, i64>,

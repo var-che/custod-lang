@@ -1,14 +1,7 @@
 use std::collections::HashMap;
 use front_end::types::{Type, Permission, PermissionedType};
-use crate::hir::{HirProgram, HirStatement, HirValue, HirVariable};
-
-#[derive(Debug)]
-pub enum TypeError {
-    InvalidPermissionCombination(String),
-    PermissionViolation(String),
-    TypeMismatch(String),
-    UndefinedVariable(String),
-}
+use front_end::token::PermissionType;
+use crate::hir::{HirProgram, HirStatement, HirValue, HirVariable, HirAssignment};
 
 pub struct TypePermissionChecker {
     type_env: HashMap<String, PermissionedType>
@@ -21,87 +14,109 @@ impl TypePermissionChecker {
         }
     }
 
-    // This runs during compilation
-    pub fn check_program(&mut self, program: &HirProgram) -> Result<(), TypeError> {
+    pub fn check_program(&mut self, program: &HirProgram) -> Result<(), String> {
         for stmt in &program.statements {
             self.check_statement(stmt)?;
         }
         Ok(())
     }
 
-    fn check_statement(&mut self, stmt: &HirStatement) -> Result<(), TypeError> {
+    fn check_statement(&mut self, stmt: &HirStatement) -> Result<(), String> {
         match stmt {
             HirStatement::Declaration(var) => self.check_declaration(var),
             HirStatement::Assignment(assign) => self.check_assignment(assign),
-            HirStatement::Actor(actor) => self.check_actor(actor),
+            HirStatement::Print(value) => self.check_value_permissions(value),
+            HirStatement::AtomicBlock(stmts) => {
+                for stmt in stmts {
+                    self.check_statement(stmt)?;
+                }
+                Ok(())
+            },
             _ => Ok(())
         }
     }
 
-    fn check_declaration(&mut self, var: &HirVariable) -> Result<(), TypeError> {
-        // Check permission combination validity
-        let ptype = PermissionedType::new(
-            var.typ.clone(),
-            var.permissions.permissions.iter().map(|p| match p {
+    fn check_declaration(&mut self, var: &HirVariable) -> Result<(), String> {
+        if let Some(init) = &var.initializer {
+            match init {
+                HirValue::Variable(source_name, _) => {
+                    // Check if source variable exists and has read/reads permission
+                    if let Some(source_type) = self.type_env.get(source_name) {
+                        let needs_read = var.permissions.permissions.contains(&PermissionType::Read) ||
+                                       var.permissions.permissions.contains(&PermissionType::Reads);
+                        
+                        if needs_read {
+                            // Check if we're trying to create a reads alias without clone
+                            if var.permissions.permissions.contains(&PermissionType::Reads) {
+                                return Err(format!(
+                                    "Must use 'clone' keyword when creating reads alias: {} = clone {}",
+                                    var.name, source_name
+                                ));
+                            }
+                        }
+                    } else {
+                        return Err(format!("Variable {} not found", source_name));
+                    }
+                }
+                _ => self.check_value_permissions(init)?,
+            }
+        }
+
+        // Store variable permissions
+        let permissions: Vec<Permission> = var.permissions.permissions.iter()
+            .map(|p| match p {
                 PermissionType::Read => Permission::Read,
                 PermissionType::Write => Permission::Write,
                 PermissionType::Reads => Permission::Reads,
                 PermissionType::Writes => Permission::Writes,
-            }).collect()
+            })
+            .collect();
+
+        self.type_env.insert(
+            var.name.clone(),
+            PermissionedType::new(var.typ.clone(), permissions)
         );
 
-        // Validate permission combinations at compile time
-        if ptype.has_invalid_combination() {
-            return Err(TypeError::InvalidPermissionCombination(
-                format!("Invalid permission combination for variable {}", var.name)
-            ));
-        }
-
-        // Check initializer permissions
-        if let Some(init) = &var.initializer {
-            self.check_initialization(&var.name, init, &ptype)?;
-        }
-
-        // Add to type environment
-        self.type_env.insert(var.name.clone(), ptype);
         Ok(())
     }
 
-    fn check_assignment(&self, assign: &HirAssignment) -> Result<(), TypeError> {
-        let target_type = self.type_env.get(&assign.target)
-            .ok_or_else(|| TypeError::UndefinedVariable(
-                format!("Variable {} not defined", assign.target)
-            ))?;
+    fn check_assignment(&self, assign: &HirAssignment) -> Result<(), String> {
+        // Check if target has write permission
+        if let Some(target_type) = self.type_env.get(&assign.target) {
+            if !target_type.permissions.contains(&Permission::Write) {
+                return Err(format!(
+                    "Cannot write to {} - missing write permission",
+                    assign.target
+                ));
+            }
 
-        // Check write permission at compile time
-        if !target_type.has_write_permission() {
-            return Err(TypeError::PermissionViolation(
-                format!("Cannot write to {} - no write permission", assign.target)
-            ));
+            // Also check read permissions for variables used in the value
+            self.check_value_permissions(&assign.value)?;
+        } else {
+            return Err(format!("Variable {} not found", assign.target));
         }
-
-        // Check value permissions
-        self.check_value_permissions(&assign.value, target_type)
+        Ok(())
     }
 
-    fn check_value_permissions(
-        &self,
-        value: &HirValue,
-        expected_type: &PermissionedType
-    ) -> Result<(), TypeError> {
+    fn check_value_permissions(&self, value: &HirValue) -> Result<(), String> {
         match value {
             HirValue::Variable(name, _) => {
-                let source_type = self.type_env.get(name)
-                    .ok_or_else(|| TypeError::UndefinedVariable(
-                        format!("Variable {} not defined", name)
-                    ))?;
-
-                // Check permission compatibility at compile time
-                if !source_type.is_compatible_with(expected_type) {
-                    return Err(TypeError::PermissionViolation(
-                        format!("Incompatible permissions between {} and target", name)
-                    ));
+                if let Some(var_type) = self.type_env.get(name) {
+                    // Allow reading if variable has read or reads permission
+                    if !var_type.permissions.contains(&Permission::Read) &&
+                       !var_type.permissions.contains(&Permission::Reads) {
+                        return Err(format!(
+                            "Cannot read from {} - missing read/reads permission",
+                            name
+                        ));
+                    }
+                } else {
+                    return Err(format!("Variable {} not found", name));
                 }
+            }
+            HirValue::Binary { left, right, .. } => {
+                self.check_value_permissions(left)?;
+                self.check_value_permissions(right)?;
             }
             _ => {}
         }

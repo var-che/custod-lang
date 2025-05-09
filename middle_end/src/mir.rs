@@ -62,6 +62,22 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
                                 value: MirValue::Number(*n),
                             });
                         },
+                        HirValue::Clone(expr) => {
+                            // Load the source value
+                            let source_temp = temp_counter;
+                            mir.instructions.push(MirInstruction::Load {
+                                target: source_temp,
+                                value: convert_hir_value(expr),
+                            });
+                            
+                            // Store it in the target
+                            mir.instructions.push(MirInstruction::Store {
+                                target: var.name.clone(),
+                                value: MirValue::Temporary(source_temp),
+                            });
+                            
+                            temp_counter += 1;
+                        },
                         HirValue::Binary { left, right, operator, result_type } => {
                             // Load left operand
                             mir.instructions.push(MirInstruction::Load {
@@ -99,25 +115,32 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
                 mir.instructions.push(MirInstruction::WriteBarrier {
                     reference: assign.target.clone()
                 });
-                
-                // Handle +=
-                mir.instructions.push(MirInstruction::Load {
-                    target: temp_counter,
-                    value: MirValue::Variable(assign.target.clone())
-                });
-                
-                mir.instructions.push(MirInstruction::Add {
-                    target: temp_counter + 1,
-                    left: MirValue::Temporary(temp_counter),
-                    right: MirValue::Number(1)
-                });
-                
-                mir.instructions.push(MirInstruction::Store {
-                    target: assign.target.clone(),
-                    value: MirValue::Temporary(temp_counter + 1)
-                });
-                
-                temp_counter += 2;
+
+                match &assign.value {
+                    HirValue::Binary { left, right, .. } => {
+                        // Load the left operand (counter)
+                        mir.instructions.push(MirInstruction::Load {
+                            target: temp_counter,
+                            value: convert_hir_value(left),
+                        });
+
+                        // Add right value (should be 13, not 1)
+                        mir.instructions.push(MirInstruction::Add {
+                            target: temp_counter + 1,
+                            left: MirValue::Temporary(temp_counter),
+                            right: convert_hir_value(right),  // This will preserve the actual number
+                        });
+
+                        // Store the result back
+                        mir.instructions.push(MirInstruction::Store {
+                            target: assign.target.clone(),
+                            value: MirValue::Temporary(temp_counter + 1),
+                        });
+
+                        temp_counter += 2;
+                    },
+                    _ => {}
+                }
             }
             HirStatement::Print(value) => {
                 // Add read barrier before accessing the value
@@ -141,6 +164,7 @@ fn convert_hir_value(value: &HirValue) -> MirValue {
     match value {
         HirValue::Number(n, _) => MirValue::Number(*n),
         HirValue::Variable(name, _) => MirValue::Variable(name.clone()),
+        HirValue::Clone(expr) => convert_hir_value(expr),
         _ => panic!("Unsupported HIR value type"),
     }
 }
