@@ -24,6 +24,9 @@ pub enum MirInstruction {
     // Memory barriers for permissions
     ReadBarrier { reference: String },
     WriteBarrier { reference: String },
+
+    // Create reference between variables
+    CreateReference { target: String, source: String },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -105,6 +108,16 @@ pub fn lower_hir(program: &HirProgram) -> MirFunction {
                             });
                             
                             temp_counter += 3;
+                        },
+                        HirValue::Peak(expr) => {
+                            // For peak operations:
+                            // Create a reference instead of copying
+                            if let HirValue::Variable(ref source_name, _) = **expr {
+                                mir.instructions.push(MirInstruction::CreateReference {
+                                    target: var.name.clone(),
+                                    source: source_name.clone(),
+                                });
+                            }
                         }
                         _ => {}
                     }

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub struct Interpreter {
     variables: HashMap<String, i64>,
     temporaries: HashMap<usize, i64>,
+    references: HashMap<String, String>,  // Track references (target -> source)
 }
 
 impl Interpreter {
@@ -12,11 +13,21 @@ impl Interpreter {
         Self {
             variables: HashMap::new(),
             temporaries: HashMap::new(),
+            references: HashMap::new(),
         }
     }
 
     pub fn get_variable(&self, name: &str) -> Option<i64> {
-        self.variables.get(name).copied()
+        // If this is a reference, get the source variable's value
+        if let Some(source) = self.references.get(name) {
+            self.variables.get(source).copied()
+        } else {
+            self.variables.get(name).copied()
+        }
+    }
+
+    fn store_reference(&mut self, target: String, source: String) {
+        self.references.insert(target, source);
     }
 
     pub fn execute(&mut self, mir: &MirFunction) -> Result<i64, String> {
@@ -24,6 +35,14 @@ impl Interpreter {
 
         for instruction in &mir.instructions {
             match instruction {
+                MirInstruction::CreateReference { target, source } => {
+                    // Store the reference relationship
+                    self.store_reference(target.clone(), source.clone());
+                    // Get the initial value
+                    if let Some(val) = self.get_variable(source) {
+                        last_value = val;
+                    }
+                },
                 MirInstruction::Store { target, value } => {
                     let val = self.evaluate_value(value)?;
                     self.variables.insert(target.clone(), val);
@@ -59,9 +78,16 @@ impl Interpreter {
         match value {
             MirValue::Number(n) => Ok(*n),
             MirValue::Variable(name) => {
-                self.variables.get(name)
-                    .copied()
-                    .ok_or_else(|| format!("Variable {} not found", name))
+                // Check references first, then variables
+                if let Some(source) = self.references.get(name) {
+                    self.variables.get(source)
+                        .copied()
+                        .ok_or_else(|| format!("Source variable {} not found", source))
+                } else {
+                    self.variables.get(name)
+                        .copied()
+                        .ok_or_else(|| format!("Variable {} not found", name))
+                }
             },
             MirValue::Temporary(t) => {
                 self.temporaries.get(t)

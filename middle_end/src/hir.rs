@@ -16,6 +16,7 @@ pub enum HirValue {
     },
     Clone(Box<HirValue>),
     Consume(Box<HirValue>),
+    Peak(Box<HirValue>),  // Add Peak variant
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -193,9 +194,12 @@ fn convert_expression(expr: Expression) -> HirValue {
         },
         Expression::Variable(name) => HirValue::Variable(name, Type::I64),
         Expression::Clone(expr) => {
-            // Convert the inner expression and wrap it in Clone
             let inner = convert_expression(*expr);
             HirValue::Clone(Box::new(inner))
+        },
+        Expression::Peak(expr) => {
+            let inner = convert_expression(*expr);
+            HirValue::Peak(Box::new(inner))
         }
     }
 }
@@ -370,12 +374,6 @@ impl From<Statement> for VariableDecl {
         VariableDecl::Statement(stmt)
     }
 }
-
-
-
-
-
-
 
 // Fix convert_statement to use the correct convert_variable form
 fn convert_statement(stmt: Statement) -> HirStatement {
@@ -564,6 +562,10 @@ impl PermissionChecker {
                     Err(format!("Variable '{}' not found", name))
                 }
             }
+            HirValue::Peak(expr) => {
+                // For peak operations, we need either read or reads permission
+                self.check_permissions(expr)
+            },
             HirValue::Consume(inner) => {
                 // Check if we can consume the value
                 match **inner {
@@ -674,10 +676,11 @@ impl HirConverter {
             Expression::Number(n) => HirValue::Number(n, Type::I64),
             Expression::Variable(name) => HirValue::Variable(name.clone(), self.get_type(&name)),
             Expression::Clone(expr) => {
-                let inner = self.convert_expression(*expr);
-                HirValue::Clone(Box::new(inner))
-            },
+                        let inner = self.convert_expression(*expr);
+                        HirValue::Clone(Box::new(inner))
+                    },
             Expression::Binary { left, operator, right } => todo!(),
+Expression::Peak(expression) => todo!(),
         }
     }
 }

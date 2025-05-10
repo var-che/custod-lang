@@ -44,10 +44,40 @@ impl Parser {
         let word = self.read_word();
 
         match word.as_str() {
-            "reads" | "read" => {
-                let mut permissions = vec![
-                    if word == "reads" { Permission::Reads } else { Permission::Read }
-                ];
+            "read" => {
+                let mut permissions = vec![Permission::Read];
+                
+                self.skip_whitespace();
+                let name = self.read_word();
+                
+                self.skip_whitespace();
+                if self.peek_char() != '=' {
+                    return Err(format!("Expected '=', found '{}'", self.peek_char()));
+                }
+                self.position += 1; // consume '='
+                
+                self.skip_whitespace();
+                
+                // Check for peak keyword
+                let initializer = if self.peek_word() == "peak" {
+                    self.read_word(); // consume "peak"
+                    self.skip_whitespace();
+                    Expression::Peak(Box::new(Expression::Variable(self.read_word())))
+                } else {
+                    return Err(format!(
+                        "Must use 'peak' keyword for temporary read access: {} = peak {}",
+                        name, self.peek_word()
+                    ));
+                };
+
+                Ok(Statement::Declaration {
+                    name,
+                    typ: PermissionedType::new(Type::I64, permissions),
+                    initializer: Some(initializer),
+                })
+            },
+            "reads" => {
+                let mut permissions = vec![Permission::Reads];
                 
                 self.skip_whitespace();
                 if self.peek_word() == "write" {

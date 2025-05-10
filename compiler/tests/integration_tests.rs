@@ -197,6 +197,128 @@ fn test_exclusive_read_write_violation() {
     }
 }
 
+#[test]
+fn test_exclusive_read_write_clone_violation() {
+    let source = r#"
+        read write counter = 4
+        reads cloned = clone counter
+    "#;
+
+    let result = compile_and_run(source);
+    
+    assert!(result.is_err(), "Expected failure but got success: {:?}", result);
+    
+    match result {
+        Err(e) => {
+            let expected = "Cannot clone from counter - variable has exclusive read write access";
+            assert!(e.contains(expected), 
+                "Expected error '{}', got: '{}'", expected, e);
+        },
+        Ok(_) => panic!("Expected error but compilation succeeded"),
+    }
+}
+
+#[test]
+fn test_peak_read() {
+    let source = r#"
+        reads write counter = 4
+        read c = peak counter
+        print c
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("c"), Some(4));
+}
+
+#[test]
+fn test_missing_peak_keyword() {
+    let source = r#"
+        reads write counter = 4
+        read c = counter 
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_err(), "Expected failure but got success: {:?}", result);
+    
+    match result {
+        Err(e) => {
+            let expected = "Must use 'peak' keyword for temporary read access: c = peak counter";
+            assert!(e.contains(expected), 
+                "Expected error '{}', got: '{}'", expected, e);
+        },
+        Ok(_) => panic!("Expected error but compilation succeeded"),
+    }
+}
+
+#[test]
+fn test_peak_reference_behavior() {
+    let source = r#"
+        reads write counter = 4
+        read c = peak counter
+        counter += 6
+        print c         
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("c"), Some(10));  // c sees the updated value
+    assert_eq!(interpreter.get_variable("counter"), Some(10));
+}
+
+#[test]
+fn test_complex_peak_behavior() {
+    let source = r#"
+        reads write counter = 10
+        reads write temp = 5
+        read view1 = peak counter
+        counter += temp
+        read view2 = peak counter
+        temp += 10
+        counter += temp
+        print view1
+        print view2
+        print counter
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("view1"), Some(30));
+    assert_eq!(interpreter.get_variable("view2"), Some(30));
+    assert_eq!(interpreter.get_variable("counter"), Some(30));
+    assert_eq!(interpreter.get_variable("temp"), Some(15));
+}
+
+#[test]
+fn test_peak_chain() {
+    let source = r#"
+        reads write original = 42
+        read view1 = peak original
+        read view2 = peak original
+        read view3 = peak original
+        original += 8
+        print view1
+        print view2
+        print view3
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    // All views should see the updated value
+    assert_eq!(interpreter.get_variable("view1"), Some(50));
+    assert_eq!(interpreter.get_variable("view2"), Some(50));
+    assert_eq!(interpreter.get_variable("view3"), Some(50));
+    assert_eq!(interpreter.get_variable("original"), Some(50));
+}
+
 // Helper function to run the full compilation pipeline
 fn compile_and_run(source: &str) -> Result<Interpreter, String> {
     // Parse source to AST

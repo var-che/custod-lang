@@ -40,16 +40,29 @@ impl TypePermissionChecker {
         if let Some(init) = &var.initializer {
             match init {
                 HirValue::Variable(source_name, _) => {
-                    // Check if source variable exists
-                    if let Some(source_type) = self.type_env.get(source_name) {
-                        // If source has read write permission, no other variables can access it
-                        if source_type.has_exclusive_access() {
-                            return Err(format!(
-                                "Cannot read from {} - variable has exclusive read write access",
-                                source_name
-                            ));
+                    // Must use peak for read permission
+                    if var.permissions.permissions.contains(&PermissionType::Read) {
+                        return Err(format!(
+                            "Must use 'peak' keyword for temporary read access: {} = peak {}",
+                            var.name, source_name
+                        ));
+                    }
+                    self.check_source_permissions(source_name)?;
+                }
+                HirValue::Peak(expr) => {
+                    if let HirValue::Variable(ref source_name, _) = **expr {
+                        if let Some(source_type) = self.type_env.get(source_name.as_str()) {
+                            // For peak operations, we need either read or reads permission
+                            if !source_type.permissions.contains(&Permission::Read) &&
+                               !source_type.permissions.contains(&Permission::Reads) {
+                                return Err(format!(
+                                    "Cannot peak from {} - missing read/reads permission",
+                                    source_name
+                                ));
+                            }
+                        } else {
+                            return Err(format!("Variable {} not found", source_name));
                         }
-                        // Rest of the permission checking logic...
                     }
                 }
                 _ => self.check_value_permissions(init)?,
@@ -57,7 +70,26 @@ impl TypePermissionChecker {
         }
 
         // Store variable permissions
-        let permissions = var.permissions.permissions.iter()
+        self.store_permissions(var)?;
+        Ok(())
+    }
+
+    fn check_source_permissions(&self, source_name: &str) -> Result<(), String> {
+        if let Some(source_type) = self.type_env.get(source_name) {
+            if source_type.has_exclusive_access() {
+                return Err(format!(
+                    "Cannot read from {} - variable has exclusive read write access",
+                    source_name
+                ));
+            }
+        } else {
+            return Err(format!("Variable {} not found", source_name));
+        }
+        Ok(())
+    }
+
+    fn store_permissions(&mut self, var: &HirVariable) -> Result<(), String> {
+        let permissions: Vec<Permission> = var.permissions.permissions.iter()
             .map(|p| match p {
                 PermissionType::Read => Permission::Read,
                 PermissionType::Write => Permission::Write,
@@ -70,7 +102,6 @@ impl TypePermissionChecker {
             var.name.clone(),
             PermissionedType::new(var.typ.clone(), permissions)
         );
-
         Ok(())
     }
 

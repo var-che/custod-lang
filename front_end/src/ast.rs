@@ -10,7 +10,8 @@ pub enum Expression {
         operator: TokenType,
         right: Box<Expression>,
     },
-    Clone(Box<Expression>),  // Add this variant
+    Clone(Box<Expression>),
+    Peak(Box<Expression>),  // Add this variant
 }
 
 #[derive(Debug, Clone)]
