@@ -137,6 +137,66 @@ fn test_explicit_clone() {
     assert_eq!(interpreter.get_variable("counter"), Some(60));
 }
 
+#[test]
+fn test_complex_operations() {
+    let source = r#"
+        reads write counter = 100
+        reads write temp = 5
+        reads snapshot = clone counter
+        counter += temp
+        temp += 10
+        counter += temp
+        print snapshot
+        print counter
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("snapshot"), Some(100));
+    assert_eq!(interpreter.get_variable("counter"), Some(120)); // Updated expectation
+    assert_eq!(interpreter.get_variable("temp"), Some(15));
+}
+
+#[test]
+fn test_exclusive_read_write() {
+    let source = r#"
+        read write counter = 4
+        counter += 5
+        print counter
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("counter"), Some(9));
+}
+
+#[test]
+fn test_exclusive_read_write_violation() {
+    let source = r#"
+        read write counter = 4
+        read c = counter
+    "#;
+
+    let result = compile_and_run(source);
+    
+    // Verify that compilation fails
+    assert!(result.is_err(), "Expected failure but got success: {:?}", result);
+    
+    // Check for specific error message
+    match result {
+        Err(e) => {
+            let expected = "Cannot read from counter - variable has exclusive read write access";
+            assert!(e.contains(expected), 
+                "Expected error '{}', got: '{}'", expected, e);
+        },
+        Ok(_) => panic!("Expected error but compilation succeeded"),
+    }
+}
+
 // Helper function to run the full compilation pipeline
 fn compile_and_run(source: &str) -> Result<Interpreter, String> {
     // Parse source to AST

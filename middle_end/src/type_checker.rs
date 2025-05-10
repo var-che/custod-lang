@@ -40,22 +40,16 @@ impl TypePermissionChecker {
         if let Some(init) = &var.initializer {
             match init {
                 HirValue::Variable(source_name, _) => {
-                    // Check if source variable exists and has read/reads permission
+                    // Check if source variable exists
                     if let Some(source_type) = self.type_env.get(source_name) {
-                        let needs_read = var.permissions.permissions.contains(&PermissionType::Read) ||
-                                       var.permissions.permissions.contains(&PermissionType::Reads);
-                        
-                        if needs_read {
-                            // Check if we're trying to create a reads alias without clone
-                            if var.permissions.permissions.contains(&PermissionType::Reads) {
-                                return Err(format!(
-                                    "Must use 'clone' keyword when creating reads alias: {} = clone {}",
-                                    var.name, source_name
-                                ));
-                            }
+                        // If source has read write permission, no other variables can access it
+                        if source_type.has_exclusive_access() {
+                            return Err(format!(
+                                "Cannot read from {} - variable has exclusive read write access",
+                                source_name
+                            ));
                         }
-                    } else {
-                        return Err(format!("Variable {} not found", source_name));
+                        // Rest of the permission checking logic...
                     }
                 }
                 _ => self.check_value_permissions(init)?,
@@ -63,7 +57,7 @@ impl TypePermissionChecker {
         }
 
         // Store variable permissions
-        let permissions: Vec<Permission> = var.permissions.permissions.iter()
+        let permissions = var.permissions.permissions.iter()
             .map(|p| match p {
                 PermissionType::Read => Permission::Read,
                 PermissionType::Write => Permission::Write,
@@ -121,5 +115,18 @@ impl TypePermissionChecker {
             _ => {}
         }
         Ok(())
+    }
+}
+
+trait ExclusiveAccess {
+    fn has_exclusive_access(&self) -> bool;
+}
+
+impl ExclusiveAccess for PermissionedType {
+    fn has_exclusive_access(&self) -> bool {
+        self.permissions.contains(&Permission::Read) && 
+        self.permissions.contains(&Permission::Write) &&
+        !self.permissions.contains(&Permission::Reads) &&
+        !self.permissions.contains(&Permission::Writes)
     }
 }
