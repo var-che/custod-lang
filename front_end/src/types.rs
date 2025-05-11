@@ -4,7 +4,16 @@ pub enum Type {
     // Add more types as needed
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl Type {
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "i64" => Ok(Type::I64),
+            _ => Err(format!("Unknown type: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]  // Added Clone
 pub enum Permission {
     Read,
     Write,

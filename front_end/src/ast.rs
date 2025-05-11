@@ -1,7 +1,7 @@
 use crate::token::TokenType;
 use crate::types::PermissionedType;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Number(i64),
     Variable(String),
@@ -11,7 +11,11 @@ pub enum Expression {
         right: Box<Expression>,
     },
     Clone(Box<Expression>),
-    Peak(Box<Expression>),  // Add this variant
+    Peak(Box<Expression>),
+    Call {
+        function: String,
+        arguments: Vec<Expression>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -52,8 +56,9 @@ pub enum Statement {
         params: Vec<(String, PermissionedType)>,
         body: Vec<Statement>,
         return_type: Option<PermissionedType>,
-        is_behavior: bool,
+        is_behavior: bool,  // Add this field
     },
+    Return(Expression),
     AtomicBlock(Vec<Statement>),
 }
 

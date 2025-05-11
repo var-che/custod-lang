@@ -44,86 +44,187 @@ impl Parser {
         let word = self.read_word();
 
         match word.as_str() {
-            "read" => {
-                let mut permissions = vec![Permission::Read];
-                
+            "fn" => {
+                // Read function name
                 self.skip_whitespace();
                 let name = self.read_word();
                 
+                // Handle parameters
                 self.skip_whitespace();
-                if self.peek_char() != '=' {
-                    return Err(format!("Expected '=', found '{}'", self.peek_char()));
-                }
-                self.position += 1; // consume '='
+                self.expect('(')?;
+                let mut params = Vec::new();
                 
-                self.skip_whitespace();
-                
-                // Check for peak keyword
-                let initializer = if self.peek_word() == "peak" {
-                    self.read_word(); // consume "peak"
+                while self.peek_char() != ')' {
+                    if !params.is_empty() {
+                        self.expect(',')?;
+                        self.skip_whitespace();
+                    }
+                    
+                    // Read parameter permissions
+                    let permissions = self.parse_permissions()?;
+                    
+                    // Read parameter name
                     self.skip_whitespace();
-                    Expression::Peak(Box::new(Expression::Variable(self.read_word())))
+                    let param_name = self.read_word();
+                    
+                    // Read parameter type
+                    self.skip_whitespace();
+                    self.expect(':')?;
+                    self.skip_whitespace();
+                    let param_type = self.read_word();
+                    
+                    params.push((param_name, PermissionedType {
+                        base_type: Type::from_str(&param_type)?,
+                        permissions,
+                    }));
+                }
+                self.expect(')')?;
+                
+                // Handle return type
+                self.skip_whitespace();
+                let return_type = if self.peek_char() == '-' && self.peek_next_char() == '>' {
+                    self.position += 2; // skip ->
+                    self.skip_whitespace();
+                    let typ = self.read_word();
+                    Some(PermissionedType {
+                        base_type: Type::from_str(&typ)?,
+                        permissions: vec![],
+                    })
                 } else {
-                    return Err(format!(
-                        "Must use 'peak' keyword for temporary read access: {} = peak {}",
-                        name, self.peek_word()
-                    ));
+                    None
                 };
-
-                Ok(Statement::Declaration {
+                
+                // Parse function body
+                self.skip_whitespace();
+                self.expect('{')?;
+                let mut body = Vec::new();
+                
+                while self.peek_char() != '}' {
+                    self.skip_whitespace();
+                    if self.peek_word() == "return" {
+                        self.read_word(); // consume "return"
+                        self.skip_whitespace();
+                        let value = self.parse_expression()?;
+                        body.push(Statement::Return(value));
+                    } else {
+                        body.push(self.parse_statement()?);
+                    }
+                }
+                self.expect('}')?;
+                
+                Ok(Statement::Function {
                     name,
-                    typ: PermissionedType::new(Type::I64, permissions),
-                    initializer: Some(initializer),
+                    params,
+                    body,
+                    return_type,
+                    is_behavior: false,  // Regular function
                 })
             },
-            "reads" => {
-                let mut permissions = vec![Permission::Reads];
-                
-                self.skip_whitespace();
-                if self.peek_word() == "write" {
-                    self.read_word(); // consume "write"
-                    permissions.push(Permission::Write);
-                }
-
+            "on" => {
+                // Read behavior name
                 self.skip_whitespace();
                 let name = self.read_word();
                 
+                // Handle parameters
                 self.skip_whitespace();
-                if self.peek_char() != '=' {
-                    return Err(format!("Expected '=', found '{}'", self.peek_char()));
-                }
-                self.position += 1; // consume '='
+                self.expect('(')?;
+                let mut params = Vec::new();
                 
-                self.skip_whitespace();
-                
-                // Check for clone keyword
-                let initializer = if self.peek_word() == "clone" {
-                    self.read_word(); // consume "clone"
+                while self.peek_char() != ')' {
+                    if !params.is_empty() {
+                        self.expect(',')?;
+                        self.skip_whitespace();
+                    }
+                    
+                    // Read parameter permissions
+                    let permissions = self.parse_permissions()?;
+                    
+                    // Read parameter name
                     self.skip_whitespace();
-                    Expression::Clone(Box::new(Expression::Variable(self.read_word())))
+                    let param_name = self.read_word();
+                    
+                    // Read parameter type
+                    self.skip_whitespace();
+                    self.expect(':')?;
+                    self.skip_whitespace();
+                    let param_type = self.read_word();
+                    
+                    params.push((param_name, PermissionedType {
+                        base_type: Type::from_str(&param_type)?,
+                        permissions,
+                    }));
+                }
+                self.expect(')')?;
+                
+                // Handle return type
+                self.skip_whitespace();
+                let return_type = if self.peek_char() == '-' && self.peek_next_char() == '>' {
+                    self.position += 2; // skip ->
+                    self.skip_whitespace();
+                    let typ = self.read_word();
+                    Some(PermissionedType {
+                        base_type: Type::from_str(&typ)?,
+                        permissions: vec![],
+                    })
                 } else {
-                    self.parse_expression()?
+                    None
                 };
-
-                Ok(Statement::Declaration {
+                
+                // Parse behavior body
+                self.skip_whitespace();
+                self.expect('{')?;
+                let mut body = Vec::new();
+                
+                while self.peek_char() != '}' {
+                    self.skip_whitespace();
+                    if self.peek_word() == "return" {
+                        self.read_word(); // consume "return"
+                        self.skip_whitespace();
+                        let value = self.parse_expression()?;
+                        body.push(Statement::Return(value));
+                    } else {
+                        body.push(self.parse_statement()?);
+                    }
+                }
+                self.expect('}')?;
+                
+                Ok(Statement::Function {
                     name,
-                    typ: PermissionedType::new(Type::I64, permissions),
-                    initializer: Some(initializer),
+                    params,
+                    body,
+                    return_type,
+                    is_behavior: true,  // Behavior
                 })
             },
-            "write" => {
-                // Handle write-only variable declaration
-                let permissions = vec![Permission::Write];
-                
+            "reads" | "read" | "write" => {
+                self.skip_whitespace();
+                let mut permissions = match word.as_str() {
+                    "reads" => vec![Permission::Reads],
+                    "read" => vec![Permission::Read],
+                    "write" => vec![Permission::Write],
+                    _ => unreachable!(),
+                };
+
+                if word != "write" {
+                    self.skip_whitespace();
+                    if self.peek_word() == "write" {
+                        self.read_word(); // consume "write"
+                        permissions.push(Permission::Write);
+                    } else if self.peek_word() == "writes" {
+                        self.read_word(); // consume "writes"
+                        permissions.push(Permission::Writes);
+                    }
+                }
+
                 self.skip_whitespace();
                 let name = self.read_word();
-                
+
                 self.skip_whitespace();
                 if self.peek_char() != '=' {
                     return Err(format!("Expected '=', found '{}'", self.peek_char()));
                 }
                 self.position += 1; // consume '='
-                
+
                 self.skip_whitespace();
                 let initializer = self.parse_expression()?;
 
@@ -139,25 +240,37 @@ impl Parser {
                 Ok(Statement::Print(expr))
             },
             _ => {
-                // Handle any variable name for assignment
                 self.skip_whitespace();
-                if self.peek_char() == '+' && self.peek_next_char() == '=' {
-                    self.position += 2; // skip +=
-                    
-                    self.skip_whitespace();
-                    let value = self.parse_expression()?;
-                    
-                    Ok(Statement::Assignment {
-                        target: word.clone(),
-                        value: Expression::Binary {
-                            left: Box::new(Expression::Variable(word)),
-                            operator: TokenType::Plus,
-                            right: Box::new(value),
-                        },
-                        target_type: PermissionedType::new(Type::I64, vec![Permission::Write]),
-                    })
-                } else {
-                    Err(format!("Expected '+=', found '{}'", self.peek_char()))
+                let target = word;
+
+                match self.peek_char() {
+                    '+' if self.peek_next_char() == '=' => {
+                        self.position += 2; // skip +=
+                        self.skip_whitespace();
+                        let value = self.parse_expression()?;
+
+                        Ok(Statement::Assignment {
+                            target: target.clone(),
+                            value: Expression::Binary {
+                                left: Box::new(Expression::Variable(target)),
+                                operator: TokenType::Plus,
+                                right: Box::new(value),
+                            },
+                            target_type: PermissionedType::new(Type::I64, vec![Permission::Write]),
+                        })
+                    },
+                    '=' => {
+                        self.position += 1; // skip =
+                        self.skip_whitespace();
+                        let value = self.parse_expression()?;
+
+                        Ok(Statement::Assignment {
+                            target,
+                            value,
+                            target_type: PermissionedType::new(Type::I64, vec![Permission::Write]),
+                        })
+                    },
+                    other => Err(format!("Expected '=' or '+=', found '{}'", other)),
                 }
             }
         }
@@ -165,7 +278,27 @@ impl Parser {
 
     fn parse_expression(&mut self) -> Result<Expression, String> {
         self.skip_whitespace();
-        
+        let left = self.parse_term()?;
+
+        self.skip_whitespace();
+        match self.peek_char() {
+            '+' => {
+                self.position += 1;
+                self.skip_whitespace();
+                let right = self.parse_term()?;
+                Ok(Expression::Binary {
+                    left: Box::new(left),
+                    operator: TokenType::Plus,
+                    right: Box::new(right),
+                })
+            },
+            _ => Ok(left),
+        }
+    }
+
+    fn parse_term(&mut self) -> Result<Expression, String> {
+        self.skip_whitespace();
+
         if let Some(digit) = self.peek_char().to_digit(10) {
             let mut number = 0;
             while let Some(d) = self.peek_char().to_digit(10) {
@@ -174,9 +307,52 @@ impl Parser {
             }
             Ok(Expression::Number(number))
         } else if self.peek_char().is_alphabetic() {
-            Ok(Expression::Variable(self.read_word()))
+            let word = self.read_word();
+            
+            self.skip_whitespace();
+            match self.peek_char() {
+                '(' => {
+                    // Function call
+                    self.position += 1; // skip (
+                    let mut args = Vec::new();
+                    
+                    while self.peek_char() != ')' {
+                        if !args.is_empty() {
+                            self.expect(',')?;
+                            self.skip_whitespace();
+                        }
+                        
+                        args.push(self.parse_expression()?);
+                    }
+                    self.expect(')')?;
+                    
+                    Ok(Expression::Call {
+                        function: word,
+                        arguments: args,
+                    })
+                },
+                _ => {
+                    if word == "peak" {
+                        self.skip_whitespace();
+                        let var_name = self.read_word();
+                        Ok(Expression::Peak(Box::new(Expression::Variable(var_name))))
+                    } else {
+                        Ok(Expression::Variable(word))
+                    }
+                }
+            }
         } else {
             Err(format!("Invalid expression at line {}, column {}", self.line, self.column))
+        }
+    }
+
+    fn expect(&mut self, expected: char) -> Result<(), String> {
+        self.skip_whitespace();
+        if self.peek_char() == expected {
+            self.position += 1;
+            Ok(())
+        } else {
+            Err(format!("Expected '{}', found '{}'", expected, self.peek_char()))
         }
     }
 
@@ -202,7 +378,7 @@ impl Parser {
     fn read_word(&mut self) -> String {
         self.skip_whitespace();
         let mut word = String::new();
-        
+
         while self.position < self.input.len() {
             let c = self.peek_char();
             if !c.is_alphanumeric() && c != '_' {
@@ -212,7 +388,7 @@ impl Parser {
             self.position += 1;
             self.column += 1;
         }
-        
+
         word
     }
 
@@ -235,6 +411,33 @@ impl Parser {
         } else {
             '\0'
         }
+    }
+
+    fn parse_permissions(&mut self) -> Result<Vec<Permission>, String> {
+        let mut permissions = Vec::new();
+        let word = self.peek_word();
+        
+        match word.as_str() {
+            "reads" => {
+                self.read_word();
+                permissions.push(Permission::Reads);
+            },
+            "read" => {
+                self.read_word();
+                permissions.push(Permission::Read);
+            },
+            "write" => {
+                self.read_word();
+                permissions.push(Permission::Write);
+            },
+            "writes" => {
+                self.read_word();
+                permissions.push(Permission::Writes);
+            },
+            _ => {}
+        }
+        
+        Ok(permissions)
     }
 
     fn expect_token(&mut self, expected: char) -> Result<(), String> {

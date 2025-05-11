@@ -319,14 +319,166 @@ fn test_peak_chain() {
     assert_eq!(interpreter.get_variable("original"), Some(50));
 }
 
+#[test]
+fn test_reads_writes_shared_mutation() {
+    let source = r#"
+        reads writes counter = 5
+        write c = counter
+        c += 5
+        print counter
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("counter"), Some(10));
+    assert_eq!(interpreter.get_variable("c"), Some(10));
+}
+
+#[test]
+fn test_reads_writes_multiple_mutations() {
+    let source = r#"
+        reads writes shared = 100
+        write a = shared
+        write b = shared
+        a += 10
+        b += 5
+        print shared
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("shared"), Some(115));
+    assert_eq!(interpreter.get_variable("a"), Some(115));
+    assert_eq!(interpreter.get_variable("b"), Some(115));
+}
+
+#[test]
+fn test_write_only_operation_error() {
+    let source = r#"
+        reads writes counter = 5
+        write c = counter
+        c += 10
+        print counter
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_err(), "Expected failure but got success: {:?}", result);
+    
+    match result {
+        Err(e) => {
+            let expected = "Cannot use += on 'c' - write-only reference cannot read its own value";
+            assert!(e.contains(expected), 
+                "Expected helpful error message about += operation, got: {}", e);
+            assert!(e.contains("Use direct assignment instead: c = <new_value>"), 
+                "Expected suggestion about direct assignment");
+            assert!(e.contains("Request read permission: read write c = counter"), 
+                "Expected suggestion about read permission");
+        },
+        Ok(_) => panic!("Expected error but compilation succeeded"),
+    }
+}
+
+#[test]
+fn test_writes_direct_assignment() {
+    let source = r#"
+        reads writes counter = 5
+        write c = counter
+        c = 10
+        print counter
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("counter"), Some(10), 
+        "Expected counter to be updated through write reference");
+    assert_eq!(interpreter.get_variable("c"), Some(10), 
+        "Expected c to have the new value");
+}
+
+#[test]
+fn test_reads_writes_with_peak_reference() {
+    let source = r#"
+        reads writes counter = 5
+        write c = counter
+        read r = peak counter
+        c = 10
+        print r
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("counter"), Some(10), 
+        "Expected counter to be updated through write reference");
+    assert_eq!(interpreter.get_variable("c"), Some(10), 
+        "Expected write reference to have new value");
+    assert_eq!(interpreter.get_variable("r"), Some(10), 
+        "Expected peak reference to see the updated value");
+}
+
+#[test]
+fn test_simple_function() {
+    let source = r#"
+        fn add(reads x: i64, reads y: i64) -> i64 {
+            return x + y
+        }
+
+        reads write result = add(5, 3)
+        print result
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("result"), Some(8), 
+        "Expected function to compute 5 + 3 = 8");
+}
+
+#[test]
+fn test_nested_function_calls() {
+    let source = r#"
+        fn double(reads x: i64) -> i64 {
+            return x + x
+        }
+
+        fn quadruple(reads x: i64) -> i64 {
+            reads write temp = double(x)
+            return double(temp)
+        }
+
+        reads write result = quadruple(3)
+        print result
+    "#;
+
+    let result = compile_and_run(source);
+    assert!(result.is_ok(), "Compilation failed with error: {:?}", result.err());
+    
+    let interpreter = result.unwrap();
+    assert_eq!(interpreter.get_variable("result"), Some(12), 
+        "Expected quadruple(3) to compute double(double(3)) = 12");
+}
+
 // Helper function to run the full compilation pipeline
 fn compile_and_run(source: &str) -> Result<Interpreter, String> {
+    println!("\n=== Starting compilation pipeline ===");
+    println!("Source code:\n{}", source);
+
     // Parse source to AST
     let mut parser = Parser::new(source);
     let ast = parser.parse().map_err(|e| format!("Parse error: {}", e))?;
+    println!("\nAST:\n{:?}", ast);
 
     // Convert AST to HIR
     let hir = convert_to_hir(ast);
+    println!("\nHIR:\n{:?}", hir);
 
     // Check permissions at compile time
     let mut checker = TypePermissionChecker::new();
@@ -335,13 +487,18 @@ fn compile_and_run(source: &str) -> Result<Interpreter, String> {
         println!("Permission check failed: {}", e);
     }
     check_result.map_err(|e| format!("Permission error: {}", e))?;
+    println!("\nPermission check passed");
 
-    // Lower HIR to MIR only if permissions are valid
+    // Lower HIR to MIR
     let mir = lower_hir(&hir);
+    println!("\nMIR:\n{:?}", mir);
 
     // Execute MIR
     let mut interpreter = Interpreter::new();
+    println!("\nStarting execution...");
     interpreter.execute(&mir).map_err(|e| format!("Execution error: {}", e))?;
+    println!("\nFinal variable states:");
+    interpreter.print_variables();  // You'll need to add this method to Interpreter
     
     Ok(interpreter)
 }

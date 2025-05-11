@@ -21,7 +21,7 @@ pub enum TokenType {
     // Operators
     Plus,
     Equal,
-    PlusEqual,
+    PlusEquals,   // Change this to PlusEquals to match usage
     
     // Literals
     Identifier(String),
@@ -33,12 +33,12 @@ pub enum TokenType {
 
 use crate::types::Permission;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PermissionType {
     Read,
     Write,
     Reads,
-    Writes,
+    Writes,  // Added this variant
 }
 
 impl From<Permission> for PermissionType {
@@ -47,7 +47,7 @@ impl From<Permission> for PermissionType {
             Permission::Read => PermissionType::Read,
             Permission::Write => PermissionType::Write,
             Permission::Reads => PermissionType::Reads,
-            Permission::Writes => PermissionType::Writes,
+            Permission::Writes => PermissionType::Writes,  // Handle the new variant
         }
     }
 }

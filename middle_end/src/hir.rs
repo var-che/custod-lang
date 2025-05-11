@@ -16,7 +16,12 @@ pub enum HirValue {
     },
     Clone(Box<HirValue>),
     Consume(Box<HirValue>),
-    Peak(Box<HirValue>),  // Add Peak variant
+    Peak(Box<HirValue>),
+    Call {
+        function: String,
+        arguments: Vec<HirValue>,
+        result_type: Type,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -32,6 +37,7 @@ pub enum HirStatement {
         behavior: String,
         arguments: Vec<HirValue>,
     },
+    Return(HirValue),  // Add this variant
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -175,6 +181,10 @@ pub fn convert_to_hir(ast: Statement) -> HirProgram {
                 type_info.variables.extend(hir.type_info.variables);
             }
         },
+        Statement::Return(expr) => {
+            // Convert return statement with expression
+            statements.push(HirStatement::Return(convert_expression(expr)));
+        },
     }
 
     HirProgram {
@@ -200,6 +210,15 @@ fn convert_expression(expr: Expression) -> HirValue {
         Expression::Peak(expr) => {
             let inner = convert_expression(*expr);
             HirValue::Peak(Box::new(inner))
+        },
+        Expression::Call { function, arguments } => {
+            HirValue::Call {
+                function: function.clone(),
+                arguments: arguments.into_iter()
+                    .map(|arg| convert_expression(arg))
+                    .collect(),
+                result_type: Type::I64,
+            }
         }
     }
 }
@@ -396,6 +415,8 @@ fn convert_statement(stmt: Statement) -> HirStatement {
             ),
         Statement::Function { .. } =>
             HirStatement::Method(convert_method(stmt)),
+        Statement::Return(expr) =>
+            HirStatement::Return(convert_expression(expr)),
         _ => panic!("Unexpected statement type"),
     }
 }
@@ -539,6 +560,10 @@ impl PermissionChecker {
                 self.check_value_permissions(value)
             }
             HirStatement::ActorCall { .. } => Ok(()),
+            HirStatement::Return(value) => {
+                // Check permissions for return value
+                self.check_value_permissions(value)
+            }
             _ => Ok(()),
         }
     }
@@ -676,11 +701,28 @@ impl HirConverter {
             Expression::Number(n) => HirValue::Number(n, Type::I64),
             Expression::Variable(name) => HirValue::Variable(name.clone(), self.get_type(&name)),
             Expression::Clone(expr) => {
-                        let inner = self.convert_expression(*expr);
-                        HirValue::Clone(Box::new(inner))
-                    },
-            Expression::Binary { left, operator, right } => todo!(),
-Expression::Peak(expression) => todo!(),
+                let inner = self.convert_expression(*expr);
+                HirValue::Clone(Box::new(inner))
+            },
+            Expression::Binary { left, operator, right } => HirValue::Binary {
+                left: Box::new(self.convert_expression(*left)),
+                operator,
+                right: Box::new(self.convert_expression(*right)),
+                result_type: Type::I64,
+            },
+            Expression::Peak(expr) => {
+                let inner = self.convert_expression(*expr);
+                HirValue::Peak(Box::new(inner))
+            },
+            Expression::Call { function, arguments } => {
+                HirValue::Call {
+                    function: function.clone(),
+                    arguments: arguments.into_iter()
+                        .map(|arg| self.convert_expression(arg))
+                        .collect(),
+                    result_type: Type::I64,
+                }
+            }
         }
     }
 }
