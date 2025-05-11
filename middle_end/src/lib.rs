@@ -1,5 +1,5 @@
 pub mod hir;
-pub mod mir;
+pub mod mir;  // Keep your existing MIR module
 pub mod optimize;
 pub mod analysis;
 pub mod interpreter;

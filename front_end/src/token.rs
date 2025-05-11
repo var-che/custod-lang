@@ -1,34 +1,31 @@
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
-    // Keywords
-    Actor,     // New: 'actor' keyword
-    On,        // New: 'on' keyword for behaviors
-    Fn,        // New: 'fn' keyword for methods
-    Atomic,    // New: 'atomic' block
-    Reads,
-    Write,
-    Read,
-    Writes,
-    
-    // Symbols
-    LeftBrace,    // {
-    RightBrace,   // }
-    LeftParen,    // (
-    RightParen,   // )
-    Arrow,        // ->
-    Comma,        // ,
-    
-    // Operators
-    Plus,
-    Equal,
-    PlusEquals,   // Change this to PlusEquals to match usage
-    
-    // Literals
-    Identifier(String),
-    Number(i64),
-    
-    // Other
-    Eof,
+    // Single-character tokens
+    LeftParen, RightParen, LeftBrace, RightBrace,
+    Comma, Dot, Minus, Plus, Semicolon, Slash, Star, Colon,
+    Bang, // '!'
+    Actor, On, Atomic,
+
+    If, Else,
+
+    Fn, Return, Print, 
+
+    TypeI64, 
+    Number(i64),  // Make sure this takes an i64 value
+    Identifier(String),  // Add this variant to hold identifier names
+
+    Error(String),  // Make error take a String for the message
+
+    Read, Write, Reads, Writes, Peak, Clone,
+
+    // Two-character tokens
+    Equal, EqualEqual, // '=', '=='
+    BangEqual, // '!='
+    Less, LessEqual, // '<', '<='
+    Greater, GreaterEqual, // '>', '>='
+    PlusEqual, MinusEqual, StarEqual, SlashEqual, // '+=', '-=', '*=', '/='
+    Arrow,
+    Eof, // '->'
 }
 
 use crate::types::Permission;
@@ -48,6 +45,21 @@ impl From<Permission> for PermissionType {
             Permission::Write => PermissionType::Write,
             Permission::Reads => PermissionType::Reads,
             Permission::Writes => PermissionType::Writes,  // Handle the new variant
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    pub token_type: TokenType,
+    pub lexeme: String,
+}
+
+impl Token {
+    pub fn new(token_type: TokenType, lexeme: &str) -> Self {
+        Self {
+            token_type,
+            lexeme: lexeme.to_string(),
         }
     }
 }
