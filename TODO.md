@@ -3,6 +3,14 @@
 [+] Binary expressions in MIR are properly evaluated, allowing operations like `c = c + 5`
 [+] Compiler pipeline integrated from lexing through execution
 
+Investigate Zig features for server development:
+[+] Explicit error handling with error union types (try/catch equivalent)
+[ ] Defer statements for guaranteed resource cleanup
+[ ] Explicit allocator passing for memory management
+[ ] Comptime for zero-cost abstractions
+[ ] Optional types vs nullable pointers for safer null handling
+[ ] Slices instead of pointer+length for buffer management
+
 5/11/25
 [+] `fn` is implemented but without any scope ideas. Aliases are flatten in the global environment. 
 [+] variables declared inside of the functions need to be isolated from the outer environment. 
