@@ -349,16 +349,25 @@ impl Parser {
 
     fn parse_variable_declaration(&mut self) -> Result<Statement, String> {
         // Store the first token position
-        let _start_token_pos = self.current;
+        let start_token_pos = self.current;
         
         // Check for permission modifiers
         let mut permissions = Vec::new();
-        match self.peek().token_type {
-            TokenType::Read | TokenType::Reads => {
-                self.advance(); // Consume 'read' or 'reads'
-                permissions.push(Permission::Read);
-            },
-            _ => {} // No permission modifier
+        
+        // Loop to handle multiple permissions (read, write, reads, writes)
+        while self.match_any(&[
+            TokenType::Read, 
+            TokenType::Write, 
+            TokenType::Reads, 
+            TokenType::Writes
+        ]) {
+            match self.previous().token_type {
+                TokenType::Read => permissions.push(Permission::Read),
+                TokenType::Write => permissions.push(Permission::Write),
+                TokenType::Reads => permissions.push(Permission::Reads),
+                TokenType::Writes => permissions.push(Permission::Writes),
+                _ => {}
+            }
         }
         
         // Get variable name and create span for it
@@ -387,10 +396,26 @@ impl Parser {
         // Expect assignment with initializer
         self.consume(&TokenType::Equal, "Expected '=' after variable name")?;
         
-        let initializer = self.parse_expression()?;
+        let initializer_expr = self.parse_expression()?;
+        
+        // Check permission compatibility if initializer is a variable
+        if let Expression::Variable(ref source_name) = initializer_expr {
+            // Create span for the expression
+            let expr_span = Span::new(
+                self.previous().line,
+                self.previous().column,
+                self.previous().line,
+                self.previous().column + self.previous().length - 1
+            );
+            
+            // Check permission compatibility
+            if let Err(err) = self.symbol_table.check_permission_compatibility(source_name, &typ.permissions, expr_span) {
+                self.symbol_table.add_error(err);
+            }
+        }
         
         // Create declaration statement
-        let declaration = Statement::new_declaration(name.clone(), typ.clone(), Some(initializer));
+        let declaration = Statement::new_declaration(name.clone(), typ.clone(), Some(initializer_expr));
         
         // Define the symbol with the accurate span
         self.symbol_table.define(Symbol {

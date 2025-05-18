@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use crate::types::{Type, Permission, PermissionedType};
+use std::collections::HashMap;
+use crate::types::{ Permission, PermissionedType};
 use crate::ast::{Statement, Expression};
 
 /// Represents a region of source code with start and end positions
@@ -305,11 +305,45 @@ impl SymbolTable {
         }
     }
     
+    pub fn check_permission_compatibility(&mut self, source_name: &str, target_permissions: &[Permission], span: Span) -> Result<(), ResolutionError> {
+        match self.resolve(source_name, span.clone()) {
+            Some(symbol) => {
+                // Check if permissions are compatible
+                let source_has_write = symbol.typ.permissions.contains(&Permission::Write);
+                let target_has_write = target_permissions.contains(&Permission::Write);
+                
+                // If both have write permission, that's a violation (write is exclusive)
+                if source_has_write && target_has_write {
+                    return Err(ResolutionError::PermissionViolation {
+                        name: source_name.to_string(),
+                        required: "writes".to_string(), // Should have writes permission for sharing
+                        provided: "write".to_string(),  // But has exclusive write permission
+                        span,
+                        declaration_span: Some(symbol.span.clone()),
+                    });
+                }
+                Ok(())
+            },
+            None => Err(ResolutionError::UndefinedSymbol {
+                name: source_name.to_string(),
+                span,
+            }),
+        }
+    }
+    
     pub fn process_statement(&mut self, stmt: &Statement, token_locations: &HashMap<usize, Location>) {
         match stmt {
             Statement::Declaration{name, typ, initializer} => {
                 let location = token_locations.get(&self.current_scope)
                     .cloned().unwrap_or(Location{line: 0, column: 0, span: None});
+                
+                // Check initializer for permission compatibility if it's a variable reference
+                if let Some(Expression::Variable(source_name)) = initializer {
+                    let span = location.span.clone().unwrap_or_else(|| Span::point(0, 0));
+                    if let Err(err) = self.check_permission_compatibility(source_name, &typ.permissions, span) {
+                        self.add_error(err);
+                    }
+                }
                 
                 self.define(Symbol {
                     name: name.clone(),
@@ -347,6 +381,12 @@ impl SymbolTable {
             Expression::Binary{left, right, ..} => {
                 self.process_expression(left, token_locations);
                 self.process_expression(right, token_locations);
+            },
+            Expression::Call { function: _, arguments } => {
+                // Process all arguments
+                for arg in arguments {
+                    self.process_expression(arg, token_locations);
+                }
             },
             // Handle other expression types...
             _ => {}

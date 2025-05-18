@@ -79,4 +79,38 @@ fn test_immutable_assignment_error() {
     }
 }
 
+#[test]
+fn test_write_permission_violation() {
+    let source = r#"
+    read write counter: Int = 5
+    write c: Int = counter
+    "#;
+    
+    let mut source_manager = SourceManager::new();
+    source_manager.set_default_source(source);
+    
+    let mut parser = Parser::from_source(source);
+    let statements = parser.parse_statements();
+    
+    // Print for debugging
+    println!("Parsed statements: {:?}", statements);
+    println!("Symbol table errors: {:?}", parser.get_symbol_table().get_errors());
+    
+    let errors = parser.get_symbol_table().get_errors();
+    assert!(!errors.is_empty(), "Should have caught a permission violation error");
+    
+    // Test error formatting
+    let reporter = DiagnosticReporter::new(source_manager);
+    for error in errors {
+        let formatted = reporter.report_error(error);
+        println!("{}", formatted);
+        assert!(formatted.contains("permission violation"), 
+                "Error message should mention permission violation");
+        assert!(formatted.contains("write"), 
+                "Error message should mention write permission");
+        assert!(formatted.contains("counter"), 
+                "Error message should reference the source variable");
+    }
+}
+
 
