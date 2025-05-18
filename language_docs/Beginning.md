@@ -35,6 +35,7 @@ Permissions:
 - [[read,write]]
 - [[reads]]
 - [[reads write]]
+- [[recover]] is a work in progress
 
 ## TODO / read
 - [Whirley spec pdf](https://whiley.org/pdfs/WhileyLanguageSpec.pdf) - inspiration of how to write a spec, and consider `requires` and `ensures` keywords for functions.

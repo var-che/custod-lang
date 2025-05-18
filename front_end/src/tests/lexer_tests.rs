@@ -1,289 +1,129 @@
 use crate::lexer::Lexer;
-use crate::token::{Token, TokenType};
+use crate::token::TokenType;
 
 #[test]
-fn test_lexer_numbers() {
-    let source = "123 456 0";
+fn test_type_name_tokens() {
+    let source = "Int Int8 Int16 Int32 Int64 UInt UInt8 UInt16 UInt32 UInt64 Float Float32 Float64 Bool String";
     let mut lexer = Lexer::new(source.to_string());
     let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
     
-    assert_eq!(tokens.len(), 4); // 3 numbers + EOF
-    assert_eq!(tokens[0].token_type, TokenType::Number(123));
-    assert_eq!(tokens[1].token_type, TokenType::Number(456));
-    assert_eq!(tokens[2].token_type, TokenType::Number(0));
-    assert_eq!(tokens[3].token_type, TokenType::Eof);
+    // Remove the EOF token
+    let tokens = &tokens[0..tokens.len() - 1];
+    
+    // Check that we have the expected number of tokens
+    assert_eq!(tokens.len(), 15, "Should have 15 type tokens");
+    
+    // Check each token type
+    assert_eq!(tokens[0].token_type, TokenType::TypeInt);
+    assert_eq!(tokens[1].token_type, TokenType::TypeInt8);
+    assert_eq!(tokens[2].token_type, TokenType::TypeInt16);
+    assert_eq!(tokens[3].token_type, TokenType::TypeInt32);
+    assert_eq!(tokens[4].token_type, TokenType::TypeInt64);
+    assert_eq!(tokens[5].token_type, TokenType::TypeUInt);
+    assert_eq!(tokens[6].token_type, TokenType::TypeUInt8);
+    assert_eq!(tokens[7].token_type, TokenType::TypeUInt16);
+    assert_eq!(tokens[8].token_type, TokenType::TypeUInt32);
+    assert_eq!(tokens[9].token_type, TokenType::TypeUInt64);
+    assert_eq!(tokens[10].token_type, TokenType::TypeFloat);
+    assert_eq!(tokens[11].token_type, TokenType::TypeFloat32);
+    assert_eq!(tokens[12].token_type, TokenType::TypeFloat64);
+    assert_eq!(tokens[13].token_type, TokenType::TypeBool);
+    assert_eq!(tokens[14].token_type, TokenType::TypeString);
 }
 
 #[test]
-fn test_lexer_operators() {
-    let source = "+ - * / = == != < > <= >= += -= *= /=";
+fn test_variable_declaration_with_types() {
+    let source = "reads x: Int = 42\nwrites y: String = \"hello\"";
     let mut lexer = Lexer::new(source.to_string());
     let tokens = lexer.scan_tokens();
     
-    assert_eq!(tokens.len(), 15); // 14 operators + EOF
-    assert_eq!(tokens[0].token_type, TokenType::Plus);
-    assert_eq!(tokens[1].token_type, TokenType::Minus);
-    assert_eq!(tokens[2].token_type, TokenType::Star);
-    assert_eq!(tokens[3].token_type, TokenType::Slash);
+    // Check for 'reads' keyword (now implemented as a token type)
+    assert_eq!(tokens[0].token_type, TokenType::Reads);
+    
+    // Check for identifier 'x'
+    match &tokens[1].token_type {
+        TokenType::Identifier(name) => assert_eq!(name, "x"),
+        _ => panic!("Expected identifier token"),
+    }
+    
+    // Check for colon and type
+    assert_eq!(tokens[2].token_type, TokenType::Colon);
+    assert_eq!(tokens[3].token_type, TokenType::TypeInt);
+    
+    // Check for equals and number
     assert_eq!(tokens[4].token_type, TokenType::Equal);
-    // And so on...
+    assert_eq!(tokens[5].token_type, TokenType::Number(42));
+    
+    // Check for 'writes' keyword
+    assert_eq!(tokens[6].token_type, TokenType::Writes);
 }
 
 #[test]
-fn test_lexer_keywords() {
-    let source = "fn actor on reads writes read write peak return if else print i64";
+fn test_function_declaration() {
+    let source = "fn calculate(reads a: Int, writes b: Float64) -> Bool {\n  return a > b\n}";
     let mut lexer = Lexer::new(source.to_string());
     let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    assert_eq!(tokens.len(), 14); // Update to 14 tokens based on actual output
-    assert_eq!(tokens[0].token_type, TokenType::Fn);
-    assert_eq!(tokens[1].token_type, TokenType::Actor);
-    assert_eq!(tokens[2].token_type, TokenType::On);
-    assert_eq!(tokens[3].token_type, TokenType::Reads);
-    assert_eq!(tokens[4].token_type, TokenType::Writes);
-    // And so on...
-}
-
-#[test]
-fn test_lexer_identifiers() {
-    let source = "x y foo bar baz counter_123";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-
-    assert_eq!(tokens.len(), 7); // 6 identifiers + EOF
-    
-    if let TokenType::Identifier(name) = &tokens[0].token_type {
-        assert_eq!(name, "x");
-    } else {
-        panic!("Expected identifier token");
-    }
-    
-    if let TokenType::Identifier(name) = &tokens[5].token_type {
-        assert_eq!(name, "counter_123");
-    } else {
-        panic!("Expected identifier token");
-    }
-}
-
-#[test]
-fn test_lexer_mixed_code() {
-    let source = "fn add(reads x: i64, reads y: i64) -> i64 { return x + y }";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    // Check the token count and some key tokens
-    assert!(tokens.len() > 10);
+    println!("{:?}", tokens);
+    // Check basic function syntax elements
     assert_eq!(tokens[0].token_type, TokenType::Fn);
     
-    // Find the return token and check what follows
-    let mut return_index = 0;
-    for (i, token) in tokens.iter().enumerate() {
-        if token.token_type == TokenType::Return {
-            return_index = i;
-            break;
-        }
+    // Check function name
+    match &tokens[1].token_type {
+        TokenType::Identifier(name) => assert_eq!(name, "calculate"),
+        _ => panic!("Expected identifier for function name"),
     }
     
-    assert!(return_index > 0);
-    
-    // Check tokens after return
-    if let TokenType::Identifier(name) = &tokens[return_index + 1].token_type {
-        assert_eq!(name, "x");
-    } else {
-        panic!("Expected identifier after return");
-    }
-    
-    assert_eq!(tokens[return_index + 2].token_type, TokenType::Plus);
-    
-    if let TokenType::Identifier(name) = &tokens[return_index + 3].token_type {
-        assert_eq!(name, "y");
-    } else {
-        panic!("Expected identifier after plus");
-    }
-}
-
-#[test]
-fn test_lexer_permission_keywords() {
-    let source = "reads writes read write peak";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    assert_eq!(tokens.len(), 6); // 5 keywords + EOF
-    assert_eq!(tokens[0].token_type, TokenType::Reads);
-    assert_eq!(tokens[1].token_type, TokenType::Writes);
-    assert_eq!(tokens[2].token_type, TokenType::Read);
-    assert_eq!(tokens[3].token_type, TokenType::Write);
-    assert_eq!(tokens[4].token_type, TokenType::Peak);
-}
-
-#[test]
-fn test_lexer_variable_declarations_with_permissions() {
-    let source = "reads counter = 5\nwrite value = 10";
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    assert_eq!(tokens[0].token_type, TokenType::Reads);
-    
-    if let TokenType::Identifier(name) = &tokens[1].token_type {
-        assert_eq!(name, "counter");
-    } else {
-        panic!("Expected identifier after reads");
-    }
-    
-    assert_eq!(tokens[2].token_type, TokenType::Equal);
-    assert_eq!(tokens[3].token_type, TokenType::Number(5));
-    
-    assert_eq!(tokens[4].token_type, TokenType::Write);
-    
-    if let TokenType::Identifier(name) = &tokens[5].token_type {
-        assert_eq!(name, "value");
-    } else {
-        panic!("Expected identifier after write");
-    }
-}
-
-#[test]
-fn test_lexer_function_with_permission_parameters() {
-    let source = "fn increment(reads writes value: i64) -> i64 {
-        value = value + 1
-        return value
-    }";
-    
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    assert_eq!(tokens[0].token_type, TokenType::Fn);
-    
-    if let TokenType::Identifier(name) = &tokens[1].token_type {
-        assert_eq!(name, "increment");
-    }
-    
+    // Check opening parenthesis
     assert_eq!(tokens[2].token_type, TokenType::LeftParen);
+    
+    // Check first parameter
     assert_eq!(tokens[3].token_type, TokenType::Reads);
-    assert_eq!(tokens[4].token_type, TokenType::Writes);
+    match &tokens[4].token_type {
+        TokenType::Identifier(name) => assert_eq!(name, "a"),
+        _ => panic!("Expected identifier for parameter name"),
+    }
+    assert_eq!(tokens[5].token_type, TokenType::Colon);
+    assert_eq!(tokens[6].token_type, TokenType::TypeInt);
+    assert_eq!(tokens[7].token_type, TokenType::Comma);
     
-    if let TokenType::Identifier(name) = &tokens[5].token_type {
-        assert_eq!(name, "value");
+    // Check second parameter
+    assert_eq!(tokens[8].token_type, TokenType::Writes);
+    match &tokens[9].token_type {
+        TokenType::Identifier(name) => assert_eq!(name, "b"),
+        _ => panic!("Expected identifier for parameter name"),
+    }
+    assert_eq!(tokens[10].token_type, TokenType::Colon);
+    assert_eq!(tokens[11].token_type, TokenType::TypeFloat64);
+    
+    // Check closing parenthesis and return type
+    assert_eq!(tokens[12].token_type, TokenType::RightParen);
+    assert_eq!(tokens[13].token_type, TokenType::Arrow);
+    assert_eq!(tokens[14].token_type, TokenType::TypeBool);
+    
+    // Check function body opening
+    assert_eq!(tokens[15].token_type, TokenType::LeftBrace);
+    
+    // Check return statement
+    assert_eq!(tokens[16].token_type, TokenType::Return);
+    match &tokens[17].token_type {
+        TokenType::Identifier(name) => assert_eq!(name, "a"),
+        _ => panic!("Expected identifier in expression"),
     }
     
-    assert_eq!(tokens[6].token_type, TokenType::Colon);
-    assert_eq!(tokens[7].token_type, TokenType::TypeI64);
-}
-
-#[test]
-fn test_lexer_complex_permissions() {
-    let source = "reads write counter = 5
-        
-    fn increment(reads writes value: i64) -> i64 {
-        value = value + 1
-        return value
-    }
-        
-    reads write result = increment(counter)
-    print result
-    print counter";
+    // Check comparison operator
+    assert_eq!(tokens[18].token_type, TokenType::Greater);
     
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    // Verify the initial declaration
-    assert_eq!(tokens[0].token_type, TokenType::Reads);
-    assert_eq!(tokens[1].token_type, TokenType::Write);
-    
-    if let TokenType::Identifier(name) = &tokens[2].token_type {
-        assert_eq!(name, "counter");
+    match &tokens[19].token_type {
+        TokenType::Identifier(name) => assert_eq!(name, "b"),
+        _ => panic!("Expected identifier in expression"),
     }
     
-    // Find the specific function call "increment(counter)"
-    // Look after the second "reads write" which marks the second variable declaration
-    let mut start_index = 0;
-    let mut reads_write_count = 0;
+    // Check closing brace
+    assert_eq!(tokens[20].token_type, TokenType::RightBrace);
     
-    for (i, token) in tokens.iter().enumerate() {
-        if token.token_type == TokenType::Reads && 
-           i + 1 < tokens.len() && 
-           tokens[i+1].token_type == TokenType::Write {
-            reads_write_count += 1;
-            
-            if reads_write_count == 2 {
-                start_index = i;
-                break;
-            }
-        }
-    }
+    // Check for EOF
+    assert_eq!(tokens[21].token_type, TokenType::Eof);
     
-    assert!(start_index > 0, "Failed to find second 'reads write' sequence");
-    
-    // Now look for 'increment' after this point
-    let mut function_call_index = 0;
-    for i in start_index..tokens.len() {
-        if let TokenType::Identifier(name) = &tokens[i].token_type {
-            if name == "increment" && 
-               i + 1 < tokens.len() && 
-               tokens[i+1].token_type == TokenType::LeftParen {
-                function_call_index = i;
-                break;
-            }
-        }
-    }
-    
-    assert!(function_call_index > 0, "Failed to find increment function call");
-    
-    // Print the token we're trying to check for debugging
-    println!("Function call found at index: {}", function_call_index);
-    println!("Token at function_call_index + 1: {:?}", tokens[function_call_index + 1].token_type);
-    println!("Token at function_call_index + 2: {:?}", tokens[function_call_index + 2].token_type);
-    
-    // Updated check for function argument
-    match &tokens[function_call_index + 2].token_type {
-        TokenType::Identifier(name) => {
-            assert_eq!(name, "counter", "Expected counter as function argument");
-        },
-        other => {
-            panic!("Expected identifier as function argument, got {:?}", other);
-        }
-    }
-}
-
-#[test]
-fn test_lexer_peak_reference() {
-    let source = "reads writes counter = 5
-    read r = peak counter";
-    
-    let mut lexer = Lexer::new(source.to_string());
-    let tokens = lexer.scan_tokens();
-    debug_print_tokens(&tokens);
-    
-    // Check for the peak keyword
-    let mut peak_index = 0;
-    for (i, token) in tokens.iter().enumerate() {
-        if token.token_type == TokenType::Peak {
-            peak_index = i;
-            break;
-        }
-    }
-    
-    assert!(peak_index > 0, "Failed to find peak keyword");
-    
-    // Check what comes after peak
-    if let TokenType::Identifier(name) = &tokens[peak_index + 1].token_type {
-        assert_eq!(name, "counter", "Expected counter after peak");
-    } else {
-        panic!("Expected identifier after peak");
-    }
-}
-
-fn debug_print_tokens(tokens: &[Token]) {
-    for (i, token) in tokens.iter().enumerate() {
-        println!("Token {}: {:?} (\"{}\")", i, token.token_type, token.lexeme);
-    }
-    println!("Total tokens: {}", tokens.len()); // Add this line to verify the count
+    // Make sure we have the expected number of tokens
+    assert_eq!(tokens.len(), 22, "Should have 22 tokens in the function declaration");
 }

@@ -64,32 +64,41 @@ impl Lexer {
         }
     }
 
-    fn scan_keyword(&mut self) -> Token {
+    fn scan_identifier(&mut self) -> Token {
         while self.is_alphanumeric(self.peek()) {
             self.advance();
         }
 
         let text = &self.source[self.start..self.current];
-        match text {
-            // Keywords relevant for your language features
-            "actor" => Token::new(TokenType::Actor, text),
-            "on" => Token::new(TokenType::On, text),
-            "fn" => Token::new(TokenType::Fn, text),
-            "atomic" => Token::new(TokenType::Atomic, text),
-            "reads" => Token::new(TokenType::Reads, text),
-            "writes" => Token::new(TokenType::Writes, text),  // Added "writes"
-            "write" => Token::new(TokenType::Write, text),
-            "read" => Token::new(TokenType::Read, text),      // Added "read"
-            "peak" => Token::new(TokenType::Peak, text),      // Added "peak" 
-            "return" => Token::new(TokenType::Return, text),  // Added "return"
-            "if" => Token::new(TokenType::If, text),          // Added "if"
-            "else" => Token::new(TokenType::Else, text),      // Added "else"
-            "print" => Token::new(TokenType::Print, text),    // Added "print"
-            // Type keywords
-            "i64" => Token::new(TokenType::TypeI64, text),    // Added "i64"
+        let token_type = match text {
+            // Existing keywords
+            "fn" => TokenType::Fn,
+            "on" => TokenType::On,
+            "if" => TokenType::If,
+            "else" => TokenType::Else,
+            "print" => TokenType::Print,
             
-            _ => Token::new(TokenType::Identifier(text.to_string()), text),
-        }
+            // Permission modifiers
+            "reads" => TokenType::Reads,
+            "writes" => TokenType::Writes,
+            "read" => TokenType::Read,
+            "write" => TokenType::Write,
+            
+            // Return keyword - add this line
+            "return" => TokenType::Return,
+            
+            // Types
+            "Int" => TokenType::TypeInt,
+            "Int8" => TokenType::TypeInt8,
+            "Float64" => TokenType::TypeFloat64,
+            "Bool" => TokenType::TypeBool,
+            // ... other types
+            
+            // Default case - it's an identifier
+            _ => TokenType::Identifier(text.to_string()),
+        };
+
+        Token::new(token_type, text)
     }
 
     fn scan_number(&mut self) -> Token {
@@ -227,7 +236,7 @@ impl Lexer {
             '0'..='9' => self.scan_number(),
             
             // Identifiers and keywords
-            'a'..='z' | 'A'..='Z' | '_' => self.scan_keyword(),
+            'a'..='z' | 'A'..='Z' | '_' => self.scan_identifier(),
             
             _ => Token::new(TokenType::Error(format!("Unexpected character: {}", c)), &c.to_string()),
         }

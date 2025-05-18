@@ -10,7 +10,23 @@ pub enum TokenType {
 
     Fn, Return, Print, 
 
-    TypeI64, 
+    TypeInt,
+    TypeInt8,
+    TypeInt16,
+    TypeInt32,
+    TypeInt64,
+    TypeUInt,
+    TypeUInt8,
+    TypeUInt16,
+    TypeUInt32,
+    TypeUInt64,
+    TypeFloat,
+    TypeFloat32,
+    TypeFloat64,
+    TypeBool,
+    TypeString,
+    TypeUnit,
+
     Number(i64),  // Make sure this takes an i64 value
     Identifier(String),  // Add this variant to hold identifier names
 
