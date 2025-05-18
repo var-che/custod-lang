@@ -1,19 +1,22 @@
 //! High-level Intermediate Representation (HIR)
 //!
-//! This module manages the transformation from AST to a higher-level
-//! representation optimized for analysis and optimization.
+//! The HIR is a slightly lower-level representation than the AST,
+//! with resolved names, explicit types, and simplified constructs.
 
-pub mod types;
-pub mod converters;
-pub mod permissions;
+mod types;
+mod converter;
+pub mod validation;
+mod scope;
+mod name_resolver;
+mod desugar;
 
-// Re-export key types for convenient access
-pub use types::{
-    HirValue, HirStatement, HirVariable, HirProgram, 
-    HirActor, HirMethod, HirBehavior, MethodKind,
-    HirAssignment, TypeEnvironment
-};
-pub use converters::{convert_to_hir, HirConverter, convert_expression};
-pub use permissions::{PermissionInfo, PermissionChecker};
+// Re-export key types and functions
+pub use types::*;
+pub use converter::{convert_ast_to_hir, convert_statements_to_hir};
+pub use validation::validate_hir;
+pub use name_resolver::resolve_names;
+pub use desugar::desugar_program;
 
+#[cfg(test)]
 mod tests;
+

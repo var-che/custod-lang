@@ -124,12 +124,19 @@ struct Scope {
 }
 
 /// Error type for symbol resolution
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ResolutionError {
     DuplicateSymbol{name: String, first: Span, second: Span},
     UndefinedSymbol{name: String, span: Span},
     ImmutableAssignment{name: String, span: Span, declaration_span: Option<Span>},
     PermissionViolation{name: String, required: String, provided: String, span: Span, declaration_span: Option<Span>},
+    ReadAccessViolation{name: String, span: Span, declaration_span: Option<Span>, target_permission: String},
+    TypeMismatch { 
+        expected: String, 
+        found: String, 
+        span: Span,
+        context: String 
+    },
 }
 
 impl std::fmt::Display for ResolutionError {
@@ -195,6 +202,39 @@ impl std::fmt::Display for ResolutionError {
                 } else {
                     Ok(())
                 }
+            },
+            ResolutionError::ReadAccessViolation{name, span, declaration_span, target_permission} => {
+                write!(f, "error[E0005]: cannot directly assign reads variable '{}' to {} variable", name, target_permission)?;
+                if let Some(file) = &span.source_file {
+                    write!(f, " at {}:{}:{}", file, span.start_line, span.start_column)?;
+                } else {
+                    write!(f, " at line {}:{}", span.start_line, span.start_column)?;
+                }
+                
+                if let Some(decl_span) = declaration_span {
+                    write!(f, "\nNote: '{}' was declared with 'reads' permission", name)?;
+                    if let Some(file) = &decl_span.source_file {
+                        write!(f, " at {}:{}:{}", file, decl_span.start_line, decl_span.start_column)?;
+                    } else {
+                        write!(f, " at line {}:{}", decl_span.start_line, decl_span.start_column)?;
+                    }
+                }
+                
+                Ok(())
+            },
+            ResolutionError::TypeMismatch { expected, found, span, context } => {
+                write!(f, "error[E0006]: type mismatch {}\n", context)?;
+                
+                // Show where the type mismatch happened
+                let loc = format!("{}:{}", span.start_line, span.start_column);
+                write!(f, "--> {}\n", loc)?;
+                
+                // Add more details about the mismatch
+                write!(f, "   |\n")?;
+                write!(f, "   | expected `{}`, found `{}`\n", expected, found)?;
+                write!(f, "   |\n")?;
+                
+                write!(f, "help: ensure that all return values match the function's return type")
             },
         }
     }
@@ -322,6 +362,22 @@ impl SymbolTable {
                         declaration_span: Some(symbol.span.clone()),
                     });
                 }
+                
+                // Check for reads assignment without clone
+                let source_has_reads = symbol.typ.permissions.contains(&Permission::Reads);
+                let target_has_reads = target_permissions.contains(&Permission::Reads);
+                let target_has_read = target_permissions.contains(&Permission::Read);
+                
+                if (target_has_reads || target_has_read) && source_has_reads {
+                    // We need either peak or clone keyword for copying from reads variable
+                    return Err(ResolutionError::ReadAccessViolation {
+                        name: source_name.to_string(),
+                        span,
+                        declaration_span: Some(symbol.span.clone()),
+                        target_permission: if target_has_reads { "reads".to_string() } else { "read".to_string() },
+                    });
+                }
+                
                 Ok(())
             },
             None => Err(ResolutionError::UndefinedSymbol {

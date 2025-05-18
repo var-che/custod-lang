@@ -17,6 +17,10 @@
           | Type Checker   |
           +----------------+
                    ↓
+         +------------------+
+         | Type Inference   |  Infers types when not explicitly specified
+         +------------------+
+                   ↓
       +------------------------+
       | Diagnostics Reporter  |  Generates error messages
       +------------------------+
@@ -79,6 +83,17 @@ This module defines the type system for the language:
 - It handles "permissioned types" that include both a base type and permissions
 - It provides validation for type compatibility
 
+### Type Inference (`type_inference.rs`)
+
+The type inference module automatically determines types when they aren't explicitly specified:
+
+- It uses unification-based type inference (similar to Hindley-Milner)
+- It creates type variables as placeholders for unknown types
+- It infers types based on how variables are used in expressions
+- It resolves type variables to concrete types when possible
+- It handles type constraints across complex expressions
+
+For example, in `reads x = 42`, it automatically infers that `x` is of type `Int` based on the initializer.
 
 ### AST (Abstract Syntax Tree) (`ast.rs`)
 

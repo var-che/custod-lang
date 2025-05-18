@@ -1,14 +1,21 @@
 use crate::token::{Token, TokenType};
 use crate::ast::{Expression, FunctionBuilder, Statement};
 use crate::types::{Type, Permission, PermissionedType};
-use crate::symbol_table::{Location, ResolutionError, Span, Symbol, SymbolKind, SymbolTable}; // Added Span
+use crate::symbol_table::{ResolutionError, Span, Symbol, SymbolKind, SymbolTable};
+use crate::error::{ParseError, CompileError};
+use crate::type_inference::{TypeInferer, TypeInferenceExt};
+use crate::type_checker::{TypeChecker}; // Add this import
 use std::collections::HashMap;
+
+// Define a new Result type alias for parser operations
+pub type ParseResult<T> = Result<T, ParseError>;
 
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     symbol_table: SymbolTable,
     token_locations: HashMap<usize, Span>,
+    errors: Vec<CompileError>, // Track errors separately from symbol table
 }
 
 impl Parser {
@@ -26,11 +33,24 @@ impl Parser {
             current: 0,
             symbol_table: SymbolTable::new(),
             token_locations,
+            errors: Vec::new(),
         }
     }
     
     pub fn get_symbol_table(&self) -> &SymbolTable {
         &self.symbol_table
+    }
+    
+    // New method to get all compile errors
+    pub fn get_errors(&self) -> Vec<CompileError> {
+        let mut all_errors = self.errors.clone();
+        
+        // Also include symbol table errors - properly clone each error
+        for error in self.symbol_table.get_errors() {
+            all_errors.push(CompileError::Resolution(error.clone())); 
+        }
+        
+        all_errors
     }
     
     // Add a convenience constructor that uses the lexer
@@ -57,10 +77,11 @@ impl Parser {
             current: 0,
             symbol_table: SymbolTable::new(),
             token_locations,
+            errors: Vec::new(),
         }
     }
     
-    // Replace existing methods for working with characters
+    // Move these position tracking methods to a new SourcePosition trait or struct
     fn peek(&self) -> &Token {
         &self.tokens[self.current]
     }
@@ -97,8 +118,8 @@ impl Parser {
         }
     }
     
-    fn match_any(&mut self, types: &[TokenType]) -> bool {
-        for token_type in types {
+    fn match_any(&mut self, token_types: &[TokenType]) -> bool {
+        for token_type in token_types {
             if self.check(token_type) {
                 self.advance();
                 return true;
@@ -107,46 +128,58 @@ impl Parser {
         false
     }
     
-    fn consume(&mut self, token_type: &TokenType, message: &str) -> Result<&Token, String> {
+    fn match_token_type(&mut self, _expected: &TokenType) -> bool {
+        // Special match for Identifier and Number - we match the type but not the exact value
+        match (&self.peek().token_type, _expected) {
+            (TokenType::Identifier(_), TokenType::Identifier(_)) => {
+                self.advance();
+                true
+            },
+            (TokenType::Number(_), TokenType::Number(_)) => {
+                self.advance();
+                true
+            },
+            _ => self.match_token(_expected),
+        }
+    }
+    
+    // Update consume to return ParseResult instead of Result<&Token, String>
+    fn consume(&mut self, token_type: &TokenType, message: &str) -> ParseResult<&Token> {
         if self.check(token_type) {
             Ok(self.advance())
         } else {
-            Err(format!("{}: expected {:?}, found {:?}", 
+            let span = self.current_span();
+            Err(ParseError::unexpected_token(
+                span,
+                format!("{}: expected {:?}, found {:?}", 
                        message, 
                        token_type, 
-                       self.peek().token_type))
+                       self.peek().token_type)
+            ))
         }
     }
     
-    // Replace match_token with these more specific methods:
-    fn match_token_type(&mut self, expected_type: &TokenType) -> bool {
-        match (expected_type, &self.peek().token_type) {
-            // Match token types with values based on their variant, ignoring the actual values
-            (&TokenType::Number(_), &TokenType::Number(_)) => {
-                self.advance();
-                true
-            },
-            (&TokenType::Identifier(_), &TokenType::Identifier(_)) => {
-                self.advance();
-                true
-            },
-            // For simple token types, exact matching
-            _ => {
-                if &self.peek().token_type == expected_type {
-                    self.advance();
-                    true
-                } else {
-                    false
-                }
-            }
+    // Helper method to get the current span
+    fn current_span(&self) -> Span {
+        if let Some(span) = self.token_locations.get(&self.current) {
+            span.clone()
+        } else {
+            // Default span if not found
+            Span::point(0, 0)
         }
     }
     
-    pub fn parse_expression(&mut self) -> Result<Expression, String> {
-        self.parse_comparison() // Call the comparison parser instead of directly calling addition
+    // Update parse_expression to return ParseResult
+    pub fn parse_expression(&mut self) -> ParseResult<Expression> {
+        // First, log what we're trying to parse
+        println!("Parsing expression, current token: {:?}", self.peek().token_type);
+        
+        // Delegate to comparison which handles operators via parse_addition, etc.
+        self.parse_comparison()
     }
 
-    fn parse_addition(&mut self) -> Result<Expression, String> {
+    // Update all parsing methods to use ParseResult
+    fn parse_addition(&mut self) -> ParseResult<Expression> {
         let mut left = self.parse_multiplication()?;
 
         while self.match_token(&TokenType::Plus) || self.match_token(&TokenType::Minus) {
@@ -159,13 +192,20 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_multiplication(&mut self) -> Result<Expression, String> {
+    fn parse_multiplication(&mut self) -> ParseResult<Expression> {
         let mut left = self.parse_primary()?;
 
         // Handle * and / operators (higher precedence)
         while self.match_token(&TokenType::Star) || self.match_token(&TokenType::Slash) {
+            println!("Found multiplication/division operator: {:?}", self.previous().token_type);
             let operator = self.previous().token_type.clone();
+            
+            // Print token for debugging
+            println!("Parsing right side of operation");
+            
             let right = self.parse_primary()?;
+            
+            println!("Creating binary expression: {:?} {:?} {:?}", left, operator, right);
             
             left = Expression::Binary {
                 left: Box::new(left),
@@ -177,7 +217,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_comparison(&mut self) -> Result<Expression, String> {
+    fn parse_comparison(&mut self) -> ParseResult<Expression> {
         let mut expr = self.parse_addition()?;
         
         while self.match_any(&[
@@ -197,7 +237,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_primary(&mut self) -> Result<Expression, String> {
+    fn parse_primary(&mut self) -> ParseResult<Expression> {
         // Handle different primary expression types
         if self.match_token_type(&TokenType::Number(0)) { // The value doesn't matter here
             let value = match self.previous().token_type {
@@ -207,8 +247,28 @@ impl Parser {
             return Ok(Expression::Number(value));
         }
         
+        // Handle grouping with parentheses
+        if self.match_token(&TokenType::LeftParen) {
+            println!("Parsing grouped expression");
+            let expr = self.parse_expression()?;
+            self.consume(&TokenType::RightParen, "Expected ')' after expression")?;
+            return Ok(expr); // Return the inner expression directly
+        }
+        
+        // Handle peak operator
+        if self.match_token(&TokenType::Peak) {
+            let expr = self.parse_primary()?;
+            return Ok(Expression::Peak(Box::new(expr)));
+        }
+        
+        // Handle clone operator
+        if self.match_token(&TokenType::Clone) {
+            let expr = self.parse_primary()?;
+            return Ok(Expression::Clone(Box::new(expr)));
+        }
+        
         // Handle variable references
-        if self.match_token_type(&TokenType::Identifier("".to_string())) { // The value doesn't matter
+        if self.match_token_type(&TokenType::Identifier("".to_string())) {
             let name = match self.previous().token_type {
                 TokenType::Identifier(ref name) => name.clone(),
                 _ => unreachable!(),
@@ -223,18 +283,24 @@ impl Parser {
                 token.column + token.length - 1
             );
             
-            // Check if the variable exists in the symbol table
-            self.symbol_table.resolve(&name, span);
+            // Allow identifiers even if they're not in the symbol table yet
+            // (particularly for function parameters which might be referenced before they're added)
+            let _ = self.symbol_table.resolve(&name, span);
             
+            // Return the variable reference expression
             return Ok(Expression::Variable(name));
         }
         
         // Other primary expression types...
         
-        Err(format!("Expected expression, found {:?}", self.peek().token_type))
+        Err(ParseError::unexpected_token(
+            self.current_span(),
+            format!("Expected expression, found {:?}", self.peek().token_type)
+        ))
     }
 
-    pub fn parse_statement(&mut self) -> Result<Statement, String> {
+    // Improve error handling in parse_statement
+    pub fn parse_statement(&mut self) -> ParseResult<Statement> {
         match self.peek().token_type {
             TokenType::Reads | TokenType::Read | TokenType::Write | TokenType::Writes => {
                 self.parse_variable_declaration()
@@ -256,7 +322,8 @@ impl Parser {
                 Ok(Statement::new_print(expr))
             },
             TokenType::Identifier(_) => {
-                // This could be an assignment or function call
+                // This could be an assignment, function call, or a standalone expression
+                let start_pos = self.current;
                 let name = self.get_identifier_name()?;
                 
                 if self.match_token(&TokenType::Equal) {
@@ -323,7 +390,11 @@ impl Parser {
                         arguments,
                     }))
                 } else {
-                    Err(format!("Expected '=' or '(' after identifier, found {:?}", self.peek().token_type))
+                    // This is a standalone identifier, which could be part of an expression
+                    // Reset position and try parsing as an expression
+                    self.current = start_pos;
+                    let expr = self.parse_expression()?;
+                    Ok(Statement::Expression(expr))
                 }
             },
             TokenType::LeftBrace => {
@@ -331,6 +402,7 @@ impl Parser {
             },
             _ => {
                 // Try to parse as an expression statement
+                println!("Attempting to parse expression statement with token: {:?}", self.peek().token_type);
                 let expr = self.parse_expression()?;
                 Ok(Statement::Expression(expr))
             },
@@ -338,16 +410,19 @@ impl Parser {
     }
 
     // Helper method to get identifier name
-    fn get_identifier_name(&mut self) -> Result<String, String> {
+    fn get_identifier_name(&mut self) -> ParseResult<String> {
         if let TokenType::Identifier(ref name) = self.peek().token_type.clone() {
             self.advance(); // Consume the identifier
             Ok(name.clone())
         } else {
-            Err(format!("Expected identifier, found {:?}", self.peek().token_type))
+            Err(ParseError::unexpected_token(
+                self.current_span(),
+                format!("Expected identifier, found {:?}", self.peek().token_type)
+            ))
         }
     }
 
-    fn parse_variable_declaration(&mut self) -> Result<Statement, String> {
+    fn parse_variable_declaration(&mut self) -> ParseResult<Statement> {
         // Store the first token position
         let start_token_pos = self.current;
         
@@ -389,8 +464,29 @@ impl Parser {
             let base_type = self.parse_type()?;
             PermissionedType::new(base_type, permissions)
         } else {
-            // Default to Int if no type specified
-            PermissionedType::new(Type::Int, permissions)
+            // If no type annotation, infer from the initializer if possible
+            self.consume(&TokenType::Equal, "Expected '=' after variable name")?;
+            let initializer_expr = self.parse_expression()?;
+            
+            // Create a type inferer to infer the type
+            let mut inferer = TypeInferer::new(&mut self.symbol_table);
+            let inferred_type = initializer_expr.infer_type(&mut inferer);
+            
+            // Return to the parser with the inferred type and prepare to continue
+            let typ = PermissionedType::new(inferred_type, permissions);
+            
+            // Create the declaration statement with the inferred type
+            let declaration = Statement::new_declaration(name.clone(), typ.clone(), Some(initializer_expr));
+            
+            // Define the symbol with the accurate span and inferred type
+            self.symbol_table.define(Symbol {
+                name,
+                typ: typ.clone(),
+                kind: SymbolKind::Variable,
+                span: name_span,
+            });
+            
+            return Ok(declaration);
         };
         
         // Expect assignment with initializer
@@ -414,6 +510,12 @@ impl Parser {
             }
         }
         
+        // Don't check permission errors when using peak operator
+        // This allows read c = peak counter to work
+        if let Expression::Peak(_) = initializer_expr {
+            // Peak expressions bypass normal permission checking
+        }
+        
         // Create declaration statement
         let declaration = Statement::new_declaration(name.clone(), typ.clone(), Some(initializer_expr));
         
@@ -428,7 +530,7 @@ impl Parser {
         Ok(declaration)
     }
 
-    fn parse_block(&mut self) -> Result<Statement, String> {
+    fn parse_block(&mut self) -> ParseResult<Statement> {
         self.consume(&TokenType::LeftBrace, "Expected '{'")?;
         
         let mut statements = Vec::new();
@@ -442,17 +544,25 @@ impl Parser {
         Ok(Statement::Block(statements))
     }
 
-    fn parse_function_declaration(&mut self, is_behavior: bool) -> Result<Statement, String> {
+    fn parse_function_declaration(&mut self, is_behavior: bool) -> ParseResult<Statement> {
+        println!("Starting to parse a function declaration, is_behavior={}", is_behavior);
+        
+        // Store the function start position for error reporting
+        let function_start_pos = self.current;
+        
         self.advance(); // Consume 'fn' or 'on'
         
         let name = self.get_identifier_name()?;
+        println!("Parsing function with name: {}", name);
         
         self.consume(&TokenType::LeftParen, "Expected '(' after function name")?;
+        println!("Found opening parenthesis");
         
         // Parse parameters
         let mut parameters = Vec::new();
         
         if !self.check(&TokenType::RightParen) {
+            println!("Parsing parameters");
             loop {
                 // Parse parameter permissions
                 let mut permissions = Vec::new();
@@ -462,20 +572,26 @@ impl Parser {
                     TokenType::Reads => {
                         self.advance();
                         permissions.push(Permission::Reads);
+                        println!("Found Reads permission");
                     },
                     TokenType::Writes => {
                         self.advance();
                         permissions.push(Permission::Writes);
+                        println!("Found Writes permission");
                     },
                     TokenType::Read => {
                         self.advance();
                         permissions.push(Permission::Read);
+                        println!("Found Read permission");
                     },
                     TokenType::Write => {
                         self.advance();
                         permissions.push(Permission::Write);
+                        println!("Found Write permission");
                     },
-                    _ => {} // No permissions specified
+                    _ => {
+                        println!("No permission specified for parameter");
+                    }
                 }
                 
                 // Check for additional permission
@@ -483,85 +599,200 @@ impl Parser {
                     TokenType::Write => {
                         self.advance();
                         permissions.push(Permission::Write);
+                        println!("Found additional Write permission");
                     },
                     TokenType::Writes => {
                         self.advance();
                         permissions.push(Permission::Writes);
+                        println!("Found additional Writes permission");
                     },
-                    _ => {} // No additional permission
+                    _ => {}
                 }
                 
                 // Get parameter name
                 let param_name = self.get_identifier_name()?;
+                println!("Parameter name: {}", param_name);
                 
                 // Parse parameter type
                 let param_type = if self.match_token(&TokenType::Colon) {
+                    println!("Found colon, parsing parameter type");
                     // Use the parse_type function instead of checking for specific types
                     match self.parse_type() {
-                        Ok(base_type) => PermissionedType::new(base_type, permissions),
-                        Err(_) => return Err("Expected type after ':'".to_string())
+                        Ok(base_type) => {
+                            println!("Parameter type: {:?}", base_type);
+                            PermissionedType::new(base_type, permissions.clone())
+                        },
+                        Err(err) => {
+                            println!("Error parsing parameter type: {:?}", err);
+                            return Err(ParseError::unexpected_token(
+                                self.current_span(),
+                                "Expected type after ':'".to_string()
+                            ));
+                        }
                     }
                 } else {
+                    println!("No type specified, using default Int");
                     // Default to Int if no type specified
-                    PermissionedType::new(Type::Int, permissions)
+                    PermissionedType::new(Type::Int, permissions.clone())
                 };
                 
-                parameters.push((param_name, param_type));
+                // Add the parameter to our list
+                parameters.push((param_name.clone(), param_type));
+                println!("Added parameter {} to function", param_name);
                 
                 if !self.match_token(&TokenType::Comma) {
+                    println!("No more parameters");
                     break;
                 }
+                println!("Found comma, parsing next parameter");
             }
+        } else {
+            println!("No parameters to parse");
         }
         
+        println!("Expecting right parenthesis");
         self.consume(&TokenType::RightParen, "Expected ')' after parameters")?;
+        println!("Found closing parenthesis");
         
         // Update return type parsing in parse_function_declaration
         let return_type = if self.match_token(&TokenType::Arrow) {
+            println!("Found return type arrow ->");
             // Use parse_type instead of checking for specific types
             match self.parse_type() {
-                Ok(base_type) => Some(PermissionedType::new(base_type, vec![])),
-                Err(_) => return Err("Expected return type after '->'".to_string())
+                Ok(base_type) => {
+                    println!("Return type: {:?}", base_type);
+                    Some(PermissionedType::new(base_type, vec![]))
+                },
+                Err(err) => {
+                    println!("Error parsing return type: {:?}", err);
+                    return Err(ParseError::unexpected_token(
+                        self.current_span(),
+                        "Expected return type after '->'".to_string()
+                    ));
+                }
             }
         } else {
+            println!("No return type specified");
             None
         };
         
+        println!("Parsing function body");
         // Parse function body
         let body_stmt = self.parse_block()?;
+        println!("Parsed function body block");
         
         // Extract statements from body block
         let body = match body_stmt {
-            Statement::Block(statements) => statements,
-            _ => return Err("Expected block for function body".to_string())
+            Statement::Block(statements) => {
+                // If there's no explicit return statement and the body isn't empty,
+                // add an implicit return for the last expression
+                println!("Function body has {} statements", statements.len());
+                
+                if !statements.is_empty() {
+                    let mut modified_statements = statements.clone();
+                    
+                    // Check if the last statement can be treated as an implicit return
+                    if let Some(last) = modified_statements.last() {
+                        match last {
+                            // If the last statement is already a return, don't modify
+                            Statement::Return(_) => {
+                                println!("Last statement is already a return");
+                            },
+                            
+                            // If it's an expression, convert it to a return statement
+                            Statement::Expression(expr) => {
+                                println!("Converting expression to return: {:?}", expr);
+                                let last_idx = modified_statements.len() - 1;
+                                modified_statements[last_idx] = Statement::Return(expr.clone());
+                            },
+                            
+                            // For other types, we don't create an implicit return
+                            _ => {
+                                println!("Last statement is not an expression, not creating return");
+                            }
+                        }
+                    }
+                    
+                    modified_statements
+                } else {
+                    println!("Function body is empty");
+                    statements
+                }
+            },
+            _ => return Err(ParseError::unexpected_token(
+                self.current_span(),
+                "Expected block for function body".to_string()
+            ))
         };
         
-        // Create function using builder
-        let function = FunctionBuilder::new(name)
-            .as_behavior(is_behavior)
-            .with_return_type(return_type)
-            .with_body(body)
-            .build();
+        println!("Creating function {} with {} params and {} body statements", 
+                 name, parameters.len(), body.len());
         
+        // Register parameters in symbol table - add this for future validations
+        for (param_name, param_type) in &parameters {
+            let span = Span::point(0, 0); // Default span for now
+            self.symbol_table.define(Symbol {
+                name: param_name.clone(),
+                typ: param_type.clone(),
+                kind: SymbolKind::Parameter,
+                span,
+            });
+        }
+        
+        // Create function using builder - pass parameters correctly
+        let mut builder = FunctionBuilder::new(name)
+            .as_behavior(is_behavior)
+            .with_return_type(return_type.clone())
+            .with_body(body.clone());
+        
+        // Explicitly add each parameter to the builder
+        for (name, typ) in parameters {
+            builder = builder.with_parameter(name, typ);
+        }
+        
+        let function = builder.build();
+        
+        // Type check the function
+        let function_span = if let Some(span) = self.token_locations.get(&function_start_pos) {
+            span.clone()
+        } else {
+            Span::point(0, 0)
+        };
+        
+        // Check return type compatibility - now with immutable reference
+        let type_checker = TypeChecker::new(&self.symbol_table);
+        let type_errors = type_checker.check_function(&function, function_span);
+        
+        // Add any type errors to our errors list
+        for error in type_errors {
+            self.symbol_table.add_error(error);
+        }
+        
+        println!("Successfully built function statement");
         Ok(function)
     }
 
+    // Update parse_statements to collect errors instead of printing them
     pub fn parse_statements(&mut self) -> Vec<Statement> {
         let mut statements = Vec::new();
         
         while !self.is_at_end() {
+            println!("Parsing statement, current token: {:?}", self.peek().token_type);
             match self.parse_statement() {
-                Ok(stmt) => statements.push(stmt),
+                Ok(stmt) => {
+                    println!("Successfully parsed statement: {:?}", stmt);
+                    statements.push(stmt);
+                },
                 Err(err) => {
-                    eprintln!("Error parsing statement: {}", err);
-                    // Print current token for more context
-                    eprintln!("Current token: {:?}", self.peek().token_type);
-                    // Try to synchronize - skip until something that looks like a statement boundary
+                    println!("Error parsing statement: {:?}", err);
+                    // Record the error instead of printing it
+                    self.errors.push(CompileError::Parse(err));
                     self.synchronize();
                 }
             }
         }
         
+        println!("Finished parsing statements, found {}", statements.len());
         statements
     }
 
@@ -592,7 +823,7 @@ impl Parser {
         }
     }
 
-    fn parse_type(&mut self) -> Result<Type, String> {
+    fn parse_type(&mut self) -> ParseResult<Type> {
         match self.peek().token_type {
             TokenType::TypeInt => {
                 self.advance();
@@ -658,8 +889,19 @@ impl Parser {
                 self.advance();
                 Ok(Type::Unit)
             },
-            _ => Err(format!("Expected type name, got {:?}", self.peek().token_type)),
+            _ => Err(ParseError::unexpected_token(
+                self.current_span(),
+                format!("Expected type name, got {:?}", self.peek().token_type)
+            )),
         }
     }
 
+    // Add a debug function to test our expression parsing directly
+    pub fn test_parse_expression(&mut self, expr_str: &str) -> ParseResult<Expression> {
+        // Create a temporary parser with just this expression
+        let mut temp_parser = Parser::from_source(expr_str);
+        
+        // Parse and return the expression
+        temp_parser.parse_expression()
+    }
 }

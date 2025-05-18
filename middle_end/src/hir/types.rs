@@ -1,111 +1,174 @@
-//! HIR Type Definitions
+//! HIR type definitions
 //!
-//! This module contains the core data structures that represent the HIR.
+//! This module defines the types that make up the HIR structure.
 
-use front_end::token::{PermissionType, TokenType};
+use front_end::token::TokenType;
 use front_end::types::Type;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum HirValue {
-    Number(i64, Type),
+/// A complete HIR program
+#[derive(Debug, Clone)]
+pub struct HirProgram {
+    /// Top-level statements in the program
+    pub statements: Vec<HirStatement>,
+    
+    /// Type information collected during conversion
+    pub type_info: TypeInfo,
+}
+
+impl HirProgram {
+    /// Create a new empty HIR program
+    pub fn new() -> Self {
+        Self {
+            statements: Vec::new(),
+            type_info: TypeInfo::default(),
+        }
+    }
+    
+    /// Add a statement to the program
+    pub fn add_statement(&mut self, stmt: HirStatement) {
+        self.statements.push(stmt);
+    }
+}
+
+/// Type information for the program
+#[derive(Debug, Clone, Default)]
+pub struct TypeInfo {
+    /// Maps variable names to their types
+    pub variables: HashMap<String, Type>,
+    
+    /// Maps function names to their return types
+    pub functions: HashMap<String, Option<Type>>,
+}
+
+/// A statement in the HIR
+#[derive(Debug, Clone)]
+pub enum HirStatement {
+    /// Variable declaration
+    Declaration(HirVariable),
+    
+    /// Assignment statement
+    Assignment(HirAssignment),
+    
+    /// Function declaration
+    Function(HirFunction),
+    
+    /// Return statement
+    Return(HirExpression),
+    
+    /// Print statement
+    Print(HirExpression),
+    
+    /// Expression statement
+    Expression(HirExpression),
+    
+    /// Block of statements
+    Block(Vec<HirStatement>),
+}
+
+/// A variable declaration in HIR
+#[derive(Debug, Clone)]
+pub struct HirVariable {
+    /// Variable name
+    pub name: String,
+    
+    /// Variable type
+    pub typ: Type,
+    
+    /// Variable permissions
+    pub permissions: Vec<Permission>,
+    
+    /// Initial value (if any)
+    pub initializer: Option<HirExpression>,
+}
+
+/// An assignment in HIR
+#[derive(Debug, Clone)]
+pub struct HirAssignment {
+    /// Target variable name
+    pub target: String,
+    
+    /// Value being assigned
+    pub value: HirExpression,
+}
+
+/// A function declaration in HIR
+#[derive(Debug, Clone)]
+pub struct HirFunction {
+    /// Function name
+    pub name: String,
+    
+    /// Function parameters
+    pub parameters: Vec<HirParameter>,
+    
+    /// Function body
+    pub body: Vec<HirStatement>,
+    
+    /// Return type (if specified)
+    pub return_type: Option<Type>,
+}
+
+/// A function parameter in HIR
+#[derive(Debug, Clone)]
+pub struct HirParameter {
+    /// Parameter name
+    pub name: String,
+    
+    /// Parameter type
+    pub typ: Type,
+    
+    /// Parameter permissions
+    pub permissions: Vec<Permission>,
+}
+
+/// An expression in HIR
+#[derive(Debug, Clone)]
+pub enum HirExpression {
+    /// Literal value
+    Integer(i64),
+    
+    /// Variable reference
     Variable(String, Type),
+    
+    /// Binary operation
     Binary {
-        left: Box<HirValue>,
+        left: Box<HirExpression>,
         operator: TokenType,
-        right: Box<HirValue>,
+        right: Box<HirExpression>,
         result_type: Type,
     },
-    Clone(Box<HirValue>),
-    Consume(Box<HirValue>),
-    Peak(Box<HirValue>),
+    
+    /// Function call
     Call {
         function: String,
-        arguments: Vec<HirValue>,
+        arguments: Vec<HirExpression>,
         result_type: Type,
     },
+    
+    /// Peak operation (safely borrow a value)
+    Peak(Box<HirExpression>),
+    
+    /// Clone operation (make a copy of a value)
+    Clone(Box<HirExpression>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum HirStatement {
-    Declaration(HirVariable),
-    Method(HirMethod),
-    Assignment(HirAssignment),
-    Actor(HirActor),
-    Print(HirValue),
-    AtomicBlock(Vec<HirStatement>),
-    ActorCall {
-        actor: String,
-        behavior: String,
-        arguments: Vec<HirValue>,
-    },
-    Return(HirValue),
-    // Add this variant to handle expression statements
-    Expression(HirValue),
+/// Permission for variables and parameters
+#[derive(Debug, Clone, PartialEq)]
+pub enum Permission {
+    Read,
+    Write,
+    Reads,
+    Writes,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirVariable {
-    pub name: String,
-    pub typ: Type,
-    pub permissions: super::permissions::PermissionInfo,
-    pub initializer: Option<HirValue>
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirProgram {
-    pub statements: Vec<HirStatement>,
-    pub type_info: TypeEnvironment,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirActor {
-    pub name: String,
-    pub state: Vec<HirVariable>,
-    pub methods: Vec<HirMethod>,
-    pub behaviors: Vec<HirBehavior>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum MethodKind {
-    Regular,    // fn keyword
-    Behavior,   // on keyword
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirMethod {
-    pub name: String,
-    pub kind: MethodKind,
-    pub params: Vec<HirVariable>,
-    pub body: Vec<HirStatement>,
-    pub return_type: Option<Type>,
-    pub used_permissions: Vec<super::permissions::PermissionInfo>
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirBehavior {
-    pub name: String,
-    pub params: Vec<HirVariable>,
-    pub body: Vec<HirStatement>,
-    pub atomic_blocks: Vec<Vec<HirStatement>>,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct HirAssignment {
-    pub target: String,
-    pub value: HirValue,
-    pub permissions_used: Vec<PermissionType>
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct TypeEnvironment {
-    pub variables: HashMap<String, Type>
-}
-
-impl Default for TypeEnvironment {
-    fn default() -> Self {
-        Self {
-            variables: HashMap::new(),
+/// Convert a front-end permission to HIR permission
+impl From<front_end::types::Permission> for Permission {
+    fn from(perm: front_end::types::Permission) -> Self {
+        match perm {
+            front_end::types::Permission::Read => Permission::Read,
+            front_end::types::Permission::Write => Permission::Write,
+            front_end::types::Permission::Reads => Permission::Reads,
+            front_end::types::Permission::Writes => Permission::Writes,
         }
     }
 }

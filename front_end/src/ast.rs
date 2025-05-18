@@ -20,6 +20,9 @@ pub enum Expression {
 
 impl Expression {
     pub fn new_binary(left: Expression, operator: TokenType, right: Expression) -> Self {
+        // Debug print to check the binary expression creation
+        println!("Creating binary expression with operator: {:?}", operator);
+        
         Expression::Binary {
             left: Box::new(left),
             operator,

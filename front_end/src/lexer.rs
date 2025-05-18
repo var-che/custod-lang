@@ -100,6 +100,10 @@ impl Lexer {
             // Return keyword - add this line
             "return" => TokenType::Return,
             
+            // Permission operations
+            "peak" => TokenType::Peak,    // Add peak keyword
+            "clone" => TokenType::Clone,  // Add clone keyword
+            
             // Types
             "Int" => TokenType::TypeInt,
             "Int8" => TokenType::TypeInt8,
