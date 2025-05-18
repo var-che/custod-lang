@@ -8,7 +8,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     symbol_table: SymbolTable,
-    token_locations: HashMap<usize, Span>, // Changed from Location to Span
+    token_locations: HashMap<usize, Span>,
 }
 
 impl Parser {
@@ -16,7 +16,7 @@ impl Parser {
         let mut token_locations = HashMap::new();
         
         // Store token locations for error reporting
-        for (i, token) in tokens.iter().enumerate() {
+        for (i, _token) in tokens.iter().enumerate() {
             // For now we use default positions until Token has proper line/column tracking
             token_locations.insert(i, Span::point(0, 0));
         }
@@ -349,7 +349,7 @@ impl Parser {
 
     fn parse_variable_declaration(&mut self) -> Result<Statement, String> {
         // Store the first token position
-        let start_token_pos = self.current;
+        let _start_token_pos = self.current;
         
         // Check for permission modifiers
         let mut permissions = Vec::new();
@@ -637,15 +637,4 @@ impl Parser {
         }
     }
 
-    // Helper method to create spans from token positions
-    fn span_from_token(&self, token_index: usize) -> Span {
-        // Simplified span creation, you'd want something more sophisticated in practice
-        if token_index < self.tokens.len() {
-            // Use the line/column tracking logic from your lexer
-            // This is a placeholder - your tokens should ideally track their source positions
-            Span::point(1 + token_index / 10, 1 + token_index % 10)
-        } else {
-            Span::point(1, 1)
-        }
-    }
 }

@@ -1,5 +1,3 @@
-use crate::symbol_table::{SymbolTable, Symbol, SymbolKind, Span, ResolutionError};
-use crate::types::{Type, Permission, PermissionedType};
 use crate::source_manager::SourceManager;
 use crate::diagnostics_reporter::DiagnosticReporter;
 use crate::parser::Parser;
@@ -76,7 +74,8 @@ fn test_immutable_assignment_error() {
     for error in errors {
         let formatted = reporter.report_error(error);
         println!("{}", formatted);
-        assert!(formatted.contains("Cannot assign to immutable variable"), "Error message should mention immutable variable");
+        assert!(formatted.contains("cannot assign to immutable variable"), 
+                "Error message should mention immutable variable");
     }
 }
 

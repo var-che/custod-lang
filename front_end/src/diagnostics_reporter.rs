@@ -1,4 +1,4 @@
-use crate::symbol_table::{ResolutionError, Span};
+use crate::symbol_table::{ResolutionError};
 use crate::source_manager::SourceManager;
 
 pub struct DiagnosticReporter {

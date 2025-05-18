@@ -1,5 +1,6 @@
 5/18/25
 [ ] Added symbol table for errors and tracing declarations within the proper scopes.
+[ ] Add tests for write writes read reads peak clone.
 
 5/12/25
 [+] Peak reference behavior fully implemented and tested in the compiler pipeline
