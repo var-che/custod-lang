@@ -3,9 +3,11 @@ use crate::token::Token;
 
 pub struct Lexer {
     source: String,
-    start: usize,
-    current: usize,
-    line: usize,  // Add line tracking for better error reporting
+    start: usize,       // Start position of current token in source
+    current: usize,     // Current position in source
+    line: usize,        // Current line
+    column: usize,      // Current column
+    start_column: usize, // Starting column of current token
 }
 
 impl Lexer {
@@ -14,7 +16,9 @@ impl Lexer {
             source,
             start: 0,
             current: 0,
-            line: 1,  // Start at line 1
+            line: 1,      // Lines are 1-indexed
+            column: 1,    // Columns are 1-indexed
+            start_column: 1,
         }
     }
     
@@ -38,6 +42,7 @@ impl Lexer {
             false
         } else {
             self.current += 1;
+            self.column += 1;
             true
         }
     }
@@ -58,6 +63,14 @@ impl Lexer {
         if self.current < self.source.len() {
             let c = self.source.chars().nth(self.current).unwrap_or('\0');
             self.current += 1;
+            self.column += 1;
+            
+            // Handle newlines for line/column tracking
+            if c == '\n' {
+                self.line += 1;
+                self.column = 1;
+            }
+            
             c
         } else {
             '\0'
@@ -98,7 +111,7 @@ impl Lexer {
             _ => TokenType::Identifier(text.to_string()),
         };
 
-        Token::new(token_type, text)
+        Token::new(token_type, text, self.line, self.start_column)
     }
 
     fn scan_number(&mut self) -> Token {
@@ -112,10 +125,10 @@ impl Lexer {
         
         // Actually parse the number from the text
         if let Ok(value) = text.parse::<i64>() {
-            Token::new(TokenType::Number(value), text)
+            Token::new(TokenType::Number(value), text, self.line, self.start_column)
         } else {
             // Provide a fallback in case parsing fails
-            Token::new(TokenType::Error(format!("Invalid number: {}", text)), text)
+            Token::new(TokenType::Error(format!("Invalid number: {}", text)), text, self.line, self.start_column)
         }
     }
 
@@ -130,6 +143,7 @@ impl Lexer {
         // Keep scanning tokens until we reach the end of the input
         while !self.is_at_end() {
             self.start = self.current; // Reset start for each new token
+            self.start_column = self.column;
             let token = self.scan_token();
             tokens.push(token);
         }
@@ -137,7 +151,7 @@ impl Lexer {
         // Only add EOF token if we don't already have one
         // This prevents duplicate EOF tokens
         if tokens.last().map_or(true, |t| t.token_type != TokenType::Eof) {
-            tokens.push(Token::new(TokenType::Eof, ""));
+            tokens.push(Token::new(TokenType::Eof, "", self.line, self.start_column));
         }
         
         tokens
@@ -145,90 +159,85 @@ impl Lexer {
 
     fn scan_token(&mut self) -> Token {
         // Skip whitespace before starting a new token
-        while self.peek().is_whitespace() {
-            if self.peek() == '\n' {
-                self.line += 1;
-            }
-            self.advance();
-            
-            // Update the start position after skipping whitespace
-            self.start = self.current;
-            
-            if self.is_at_end() {
-                return Token::new(TokenType::Eof, "");
-            }
+        self.skip_whitespace();
+        
+        // Remember the start position
+        self.start = self.current;
+        self.start_column = self.column;
+        
+        if self.is_at_end() {
+            return Token::new(TokenType::Eof, "", self.line, self.start_column);
         }
         
-        // Now we're at the start of a new token
         let c = self.advance();
         
         match c {
             // Single-character tokens
-            '(' => Token::new(TokenType::LeftParen, "("),
-            ')' => Token::new(TokenType::RightParen, ")"),
-            '{' => Token::new(TokenType::LeftBrace, "{"),
-            '}' => Token::new(TokenType::RightBrace, "}"),
-            ',' => Token::new(TokenType::Comma, ","),
-            ':' => Token::new(TokenType::Colon, ":"),
-            ';' => Token::new(TokenType::Semicolon, ";"),
+            '(' => Token::new(TokenType::LeftParen, "(", self.line, self.start_column),
+            ')' => Token::new(TokenType::RightParen, ")", self.line, self.start_column),
+            '{' => Token::new(TokenType::LeftBrace, "{", self.line, self.start_column),
+            '}' => Token::new(TokenType::RightBrace, "}", self.line, self.start_column),
+            ',' => Token::new(TokenType::Comma, ",", self.line, self.start_column),
+            ':' => Token::new(TokenType::Colon, ":", self.line, self.start_column),
+            ';' => Token::new(TokenType::Semicolon, ";", self.line, self.start_column),
             
             // Operators that might be one or two characters
             '+' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::PlusEqual, "+=")
+                    Token::new(TokenType::PlusEqual, "+=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Plus, "+")
+                    Token::new(TokenType::Plus, "+", self.line, self.start_column)
                 }
             },
             '-' => {
                 if self.match_char('>') {
-                    Token::new(TokenType::Arrow, "->")
+                    Token::new(TokenType::Arrow, "->", self.line, self.start_column)
                 } else if self.match_char('=') {
-                    Token::new(TokenType::MinusEqual, "-=")
+                    Token::new(TokenType::MinusEqual, "-=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Minus, "-")
+                    Token::new(TokenType::Minus, "-", self.line, self.start_column)
                 }
             },
             '*' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::StarEqual, "*=")
+                    Token::new(TokenType::StarEqual, "*=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Star, "*")
+                    Token::new(TokenType::Star, "*", self.line, self.start_column)
                 }
             },
             '/' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::SlashEqual, "/=")
+                    Token::new(TokenType::SlashEqual, "/=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Slash, "/")
+                    Token::new(TokenType::Slash, "/", self.line, self.start_column)
                 }
             },
             '=' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::EqualEqual, "==")
+                    Token::new(TokenType::EqualEqual, "==", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Equal, "=")
+                    Token::new(TokenType::Equal, "=", self.line, self.start_column)
                 }
             },
             '!' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::BangEqual, "!=")
+                    Token::new(TokenType::BangEqual, "!=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Bang, "!")
+                    Token::new(TokenType::Bang, "!", self.line, self.start_column)
                 }
             },
             '<' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::LessEqual, "<=")
+                    Token::new(TokenType::LessEqual, "<=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Less, "<")
+                    Token::new(TokenType::Less, "<", self.line, self.start_column)
                 }
             },
             '>' => {
                 if self.match_char('=') {
-                    Token::new(TokenType::GreaterEqual, ">=")
+                    Token::new(TokenType::GreaterEqual, ">=", self.line, self.start_column)
                 } else {
-                    Token::new(TokenType::Greater, ">")
+                    Token::new(TokenType::Greater, ">", self.line, self.start_column)
                 }
             },
             
@@ -238,7 +247,33 @@ impl Lexer {
             // Identifiers and keywords
             'a'..='z' | 'A'..='Z' | '_' => self.scan_identifier(),
             
-            _ => Token::new(TokenType::Error(format!("Unexpected character: {}", c)), &c.to_string()),
+            _ => Token::new(TokenType::Error(format!("Unexpected character: {}", c)), &c.to_string(), self.line, self.start_column),
+        }
+    }
+    
+    fn skip_whitespace(&mut self) {
+        loop {
+            let c = self.peek();
+            match c {
+                ' ' | '\r' | '\t' => {
+                    self.advance();
+                },
+                '\n' => {
+                    self.advance();
+                },
+                // Skip comments
+                '/' => {
+                    if self.peek_next() == '/' {
+                        // Line comment - advance until EOL or EOF
+                        while self.peek() != '\n' && !self.is_at_end() {
+                            self.advance();
+                        }
+                    } else {
+                        return; // Not whitespace, so return
+                    }
+                },
+                _ => return, // Not whitespace, so return
+            }
         }
     }
 }

@@ -1,3 +1,6 @@
+5/18/25
+[ ] Added symbol table for errors and tracing declarations within the proper scopes.
+
 5/12/25
 [+] Peak reference behavior fully implemented and tested in the compiler pipeline
 [+] Binary expressions in MIR are properly evaluated, allowing operations like `c = c + 5`

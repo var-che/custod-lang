@@ -69,13 +69,19 @@ impl From<Permission> for PermissionType {
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
+    pub line: usize,
+    pub column: usize,
+    pub length: usize,  
 }
 
 impl Token {
-    pub fn new(token_type: TokenType, lexeme: &str) -> Self {
+    pub fn new(token_type: TokenType, lexeme: &str, line: usize, column: usize) -> Self {
         Self {
             token_type,
             lexeme: lexeme.to_string(),
+            line,
+            column,
+            length: lexeme.chars().count(),
         }
     }
 }

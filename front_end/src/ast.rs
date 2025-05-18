@@ -130,7 +130,7 @@ impl Statement {
     pub fn new_assignment(target: String, value: Expression, target_type: PermissionedType) -> Self {
         Statement::Assignment { target, value, target_type }
     }
-    
+
     pub fn new_expression(expr: Expression) -> Self {
         Statement::Expression(expr)
     }
