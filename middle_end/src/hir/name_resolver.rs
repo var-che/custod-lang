@@ -5,6 +5,7 @@
 use crate::hir::scope::{SymbolTable, Symbol, ScopeError, SourceLocation};
 use crate::hir::types::*;
 use std::collections::HashMap;
+use crate::hir::diagnostics::DiagnosticReporter;
 
 /// Result of name resolution
 #[derive(Debug)]
@@ -17,6 +18,9 @@ pub struct ResolvedNames {
     
     /// Errors found during name resolution
     pub errors: Vec<ScopeError>,
+    
+    /// Rich diagnostics for user-friendly reporting
+    pub diagnostics: DiagnosticReporter,
 }
 
 /// Resolve names in a HIR program
@@ -58,10 +62,13 @@ impl NameResolver {
     
     /// Finalize name resolution and return the results
     pub fn finalize(self) -> ResolvedNames {
+        let mut diagnostics = DiagnosticReporter::from_scope_errors(self.errors.clone());
+        
         ResolvedNames {
             name_mapping: self.name_mapping,
             symbols: self.symbols,
             errors: self.errors,
+            diagnostics,
         }
     }
     
@@ -148,6 +155,7 @@ impl NameResolver {
                 typ: param.typ.clone(),
                 permissions: param.permissions.clone(),
                 initializer: None,
+                location: None,
             }, None);
         }
         
@@ -219,6 +227,7 @@ impl NameResolver {
                         typ: param.typ.clone(),
                         permissions: param.permissions.clone(),
                         initializer: None,
+                        location: None,
                     }, None);
                 }
                 
@@ -237,11 +246,19 @@ impl NameResolver {
     /// Resolve names in an expression
     fn resolve_expression(&mut self, expr: &HirExpression) {
         match expr {
-            HirExpression::Integer(_) => {
+            HirExpression::Integer(_, _) => {
                 // Integers don't contain names to resolve
             },
             
-            HirExpression::Variable(name, _typ) => {
+            HirExpression::Boolean(_) => {
+                // Booleans don't contain names to resolve
+            },
+            
+            HirExpression::String(_) => {
+                // Strings don't contain names to resolve
+            },
+            
+            HirExpression::Variable(name, _typ, _) => {
                 // Look up variable in all visible scopes
                 if let Some(symbol) = self.symbol_table.lookup(name) {
                     // Found the variable - map to canonical name
@@ -281,7 +298,16 @@ impl NameResolver {
                     self.resolve_expression(arg);
                 }
             },
-        
+            
+            HirExpression::Conditional { condition, then_expr, else_expr, .. } => {
+                self.resolve_expression(condition);
+                self.resolve_expression(then_expr);
+                self.resolve_expression(else_expr);
+            },
+            
+            HirExpression::Cast { expr, .. } => {
+                self.resolve_expression(expr);
+            },
             
             HirExpression::Peak(expr) => {
                 self.resolve_expression(expr);

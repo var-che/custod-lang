@@ -3,7 +3,7 @@
 //! This module defines the types that make up the HIR structure.
 
 use front_end::token::TokenType;
-use front_end::types::Type;
+use front_end::types::{Permission, Type};
 use std::collections::HashMap;
 
 /// A complete HIR program
@@ -41,6 +41,22 @@ pub struct TypeInfo {
     pub functions: HashMap<String, Option<Type>>,
 }
 
+/// Source location information
+#[derive(Debug, Clone, Copy)]
+pub struct SourceLocation {
+    pub file_id: usize,
+    pub start: TextPosition,
+    pub end: TextPosition,
+}
+
+/// Position in a source file
+#[derive(Debug, Clone, Copy)]
+pub struct TextPosition {
+    pub line: usize,
+    pub column: usize,
+    pub offset: usize,
+}
+
 /// A statement in the HIR
 #[derive(Debug, Clone)]
 pub enum HirStatement {
@@ -54,7 +70,7 @@ pub enum HirStatement {
     Function(HirFunction),
     
     /// Return statement
-    Return(HirExpression),
+    Return(Option<HirExpression>),
     
     /// Print statement
     Print(HirExpression),
@@ -64,6 +80,19 @@ pub enum HirStatement {
     
     /// Block of statements
     Block(Vec<HirStatement>),
+    
+    /// If statement
+    If {
+        condition: HirExpression,
+        then_branch: Box<HirStatement>,
+        else_branch: Option<Box<HirStatement>>,
+    },
+    
+    /// While loop
+    While {
+        condition: HirExpression,
+        body: Box<HirStatement>,
+    },
 }
 
 /// A variable declaration in HIR
@@ -80,6 +109,9 @@ pub struct HirVariable {
     
     /// Initial value (if any)
     pub initializer: Option<HirExpression>,
+    
+    /// Source location
+    pub location: Option<SourceLocation>,
 }
 
 /// An assignment in HIR
@@ -125,10 +157,10 @@ pub struct HirParameter {
 #[derive(Debug, Clone)]
 pub enum HirExpression {
     /// Literal value
-    Integer(i64),
+    Integer(i64, Option<SourceLocation>),
     
     /// Variable reference
-    Variable(String, Type),
+    Variable(String, Type, Option<SourceLocation>),
     
     /// Binary operation
     Binary {
@@ -150,25 +182,44 @@ pub enum HirExpression {
     
     /// Clone operation (make a copy of a value)
     Clone(Box<HirExpression>),
+    
+    /// Boolean literal
+    Boolean(bool),
+    
+    /// String literal
+    String(String),
+    
+    /// Conditional expression (ternary)
+    Conditional {
+        condition: Box<HirExpression>,
+        then_expr: Box<HirExpression>,
+        else_expr: Box<HirExpression>,
+        result_type: Type,
+    },
+    
+    /// Type cast
+    Cast {
+        expr: Box<HirExpression>,
+        target_type: Type,
+    },
 }
 
-/// Permission for variables and parameters
-#[derive(Debug, Clone, PartialEq)]
-pub enum Permission {
-    Read,
-    Write,
-    Reads,
-    Writes,
-}
 
-/// Convert a front-end permission to HIR permission
-impl From<front_end::types::Permission> for Permission {
-    fn from(perm: front_end::types::Permission) -> Self {
-        match perm {
-            front_end::types::Permission::Read => Permission::Read,
-            front_end::types::Permission::Write => Permission::Write,
-            front_end::types::Permission::Reads => Permission::Reads,
-            front_end::types::Permission::Writes => Permission::Writes,
-        }
-    }
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

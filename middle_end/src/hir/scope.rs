@@ -1,29 +1,10 @@
 //! Scope handling for HIR
 //!
-//! This module implements a scope tracking system for the HIR representation.
+//! This module provides scope tracking and symbol management for HIR.
 
-use std::collections::{HashMap, HashSet};
 use front_end::types::Type;
-use crate::hir::types::*;
-
-/// Represents a symbol in the symbol table
-#[derive(Debug, Clone)]
-pub struct Symbol {
-    /// Symbol name
-    pub name: String,
-    
-    /// Symbol type
-    pub typ: Type,
-    
-    /// Symbol permissions
-    pub permissions: Vec<Permission>,
-    
-    /// Is this symbol a function?
-    pub is_function: bool,
-    
-    /// Symbol definition location
-    pub location: Option<SourceLocation>,
-}
+use std::collections::{HashMap, HashSet};
+use crate::hir::types;
 
 /// Source location information
 #[derive(Debug, Clone)]
@@ -38,13 +19,49 @@ pub struct SourceLocation {
     pub file: String,
 }
 
-/// A symbol table that tracks scopes and symbols
-pub struct SymbolTable {
-    /// Stack of scopes, with innermost scope at the end
-    scopes: Vec<HashMap<String, Symbol>>,
+impl SourceLocation {
+    /// Convert to a types::SourceLocation
+    pub fn to_types_location(&self) -> types::SourceLocation {
+        let start = types::TextPosition {
+            line: self.line,
+            column: self.column,
+            offset: 0, // We don't have offset info, so default to 0
+        };
+        
+        types::SourceLocation {
+            file_id: 0, // We don't have file_id, so default to 0
+            start,
+            end: start, // Without end position info, use start as end
+        }
+    }
     
-    /// Track name usage to detect shadowing
-    used_names: HashSet<String>,
+    /// Create from types::SourceLocation
+    pub fn from_types_location(loc: &types::SourceLocation) -> Self {
+        Self {
+            line: loc.start.line,
+            column: loc.start.column,
+            file: format!("file_{}", loc.file_id), // Create a file name from file_id
+        }
+    }
+}
+
+/// A symbol in the symbol table
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    /// Symbol name
+    pub name: String,
+    
+    /// Symbol type
+    pub typ: Type,
+    
+    /// Symbol permissions
+    pub permissions: Vec<front_end::types::Permission>,
+    
+    /// Is this symbol a function?
+    pub is_function: bool,
+    
+    /// Symbol definition location
+    pub location: Option<SourceLocation>,
 }
 
 /// Error information for scope and name resolution issues
@@ -73,6 +90,15 @@ pub enum ScopeError {
         /// Symbol name
         name: String,
     },
+}
+
+/// A symbol table that tracks scopes and symbols
+pub struct SymbolTable {
+    /// Stack of scopes, with innermost scope at the end
+    scopes: Vec<HashMap<String, Symbol>>,
+    
+    /// Track name usage to detect shadowing
+    used_names: HashSet<String>,
 }
 
 impl SymbolTable {
@@ -105,40 +131,37 @@ impl SymbolTable {
     pub fn add_symbol(&mut self, symbol: Symbol) -> Result<(), ScopeError> {
         let name = symbol.name.clone();
         
-        // Check if already defined in current scope
-        if let Some(current_scope) = self.scopes.last() {
-            if current_scope.contains_key(&name) {
-                let previous = current_scope.get(&name).and_then(|sym| sym.location.clone());
-                return Err(ScopeError::AlreadyDefined { name, previous });
-            }
-        }
-        
-        // Check for shadowing in outer scopes
-        let mut previous_location = None;
+        // Check scope depth before mutable borrow
         let is_shadowing = self.scopes.len() > 1 && self.used_names.contains(&name);
         
+        // Pre-collect previous definition details for shadowing without borrowing self.scopes twice
+        let mut previous_def = None;
         if is_shadowing {
-            // Find previous definition without borrowing self.scopes mutably
-            // This avoids the borrowing conflict
+            // Before mutable borrow, scan for previous definition
             for scope in &self.scopes[0..self.scopes.len()-1] {
                 if let Some(sym) = scope.get(&name) {
-                    previous_location = sym.location.clone();
+                    previous_def = sym.location.clone();
                     break;
                 }
             }
         }
         
-        // Now do the mutable borrow safely
+        // Now handle the mutable borrow
         if let Some(current_scope) = self.scopes.last_mut() {
-            // Add to current scope
+            if current_scope.contains_key(&name) {
+                let prev_loc = current_scope.get(&name).and_then(|sym| sym.location.clone());
+                return Err(ScopeError::AlreadyDefined { name, previous: prev_loc });
+            }
+            
+            // Insert the symbol
             current_scope.insert(name.clone(), symbol);
             self.used_names.insert(name.clone());
             
-            // Report shadowing if found
+            // Report shadowing if needed
             if is_shadowing {
                 return Err(ScopeError::Shadowing { 
                     name, 
-                    previous: previous_location 
+                    previous: previous_def
                 });
             }
         }

@@ -5,7 +5,7 @@
 use crate::hir::types::*;
 use front_end::ast::{Statement, Expression};
 use front_end::token::TokenType;
-use front_end::types::Type;
+use front_end::types::{Permission, Type};
 
 /// Convert an AST statement to an HIR program
 pub fn convert_ast_to_hir(stmt: Statement) -> HirProgram {
@@ -68,7 +68,12 @@ impl HirConverter {
     /// Convert an AST statement to an HIR statement
     pub fn convert_statement(&mut self, stmt: Statement) -> HirStatement {
         match stmt {
-            Statement::Declaration { name, typ, initializer } => {
+            Statement::Declaration { ref name, ref typ, ref initializer } => {
+                // Use ref pattern for all fields to avoid moving anything out of stmt
+                
+                // Extract source location from the AST if available
+                let location = extract_location(&stmt);
+                
                 // Convert permissions from front-end to HIR format
                 let permissions: Vec<Permission> = typ.permissions
                     .iter()
@@ -76,17 +81,18 @@ impl HirConverter {
                     .collect();
                 
                 // Convert initializer if present
-                let init_expr = initializer.map(|expr| self.convert_expression(expr));
+                let init_expr = initializer.as_ref().map(|expr| self.convert_expression(expr.clone()));
                 
                 // Record type information
                 let base_type = typ.base_type.clone();
                 self.type_info.variables.insert(name.clone(), base_type.clone());
                 
                 HirStatement::Declaration(HirVariable {
-                    name,
+                    name: name.clone(),
                     typ: base_type,
                     permissions,
                     initializer: init_expr,
+                    location, // Use the extracted location
                 })
             },
             
@@ -139,7 +145,7 @@ impl HirConverter {
             },
             
             Statement::Return(expr) => {
-                HirStatement::Return(self.convert_expression(expr))
+                HirStatement::Return(Some(self.convert_expression(expr)))
             },
             
             Statement::Print(expr) => {
@@ -171,17 +177,24 @@ impl HirConverter {
     pub fn convert_expression(&mut self, expr: Expression) -> HirExpression {
         match expr {
             Expression::Number(value) => {
-                HirExpression::Integer(value)
+                // Extract source location from the AST if available
+                let location = extract_expr_location(&expr);
+                
+                HirExpression::Integer(value, location)
             },
             
-            Expression::Variable(name) => {
+            Expression::Variable(ref name) => {
+                // Use ref to borrow the name without moving it
+                // Extract source location first
+                let location = extract_expr_location(&expr);
+                
                 // Look up the type if known, otherwise default to Int
                 let typ = self.type_info.variables
-                    .get(&name)
+                    .get(name)
                     .cloned()
                     .unwrap_or(Type::Int);
-                    
-                HirExpression::Variable(name, typ)
+                
+                HirExpression::Variable(name.clone(), typ, location)
             },
             
             Expression::Binary { left, operator, right } => {
@@ -217,6 +230,9 @@ impl HirConverter {
                     .and_then(|t| t.clone())
                     .unwrap_or(Type::Int);
                 
+                // KNOWN LIMITATION: The parser currently doesn't properly parse function calls with arguments.
+                // Instead, it produces separate statements for the function name and arguments.
+                // This code is here for when the parser is fixed to handle function calls correctly.
                 HirExpression::Call {
                     function,
                     arguments: hir_arguments,
@@ -233,4 +249,18 @@ impl HirConverter {
             },
         }
     }
+}
+
+/// Extract source location from an AST statement
+fn extract_location(stmt: &Statement) -> Option<SourceLocation> {
+    // This would depend on how your AST stores locations
+    // For now, we'll return None as a placeholder
+    None
+}
+
+/// Extract source location from an AST expression
+fn extract_expr_location(expr: &Expression) -> Option<SourceLocation> {
+    // This would depend on how your AST stores locations
+    // For now, we'll return None as a placeholder
+    None
 }

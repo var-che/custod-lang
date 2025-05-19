@@ -60,6 +60,7 @@ impl Desugarer {
                     typ: var.typ.clone(),
                     permissions: var.permissions.clone(),
                     initializer,
+                    location: var.location.clone(),
                 })
             },
             
@@ -102,6 +103,12 @@ impl Desugarer {
                 })
             },
             
+            HirStatement::Return(expr_opt) => {
+                // Process Option<HirExpression> correctly
+                let desugared = expr_opt.as_ref().map(|expr| self.desugar_expression(expr));
+                HirStatement::Return(desugared)
+            },
+            
             // Handle any other statement types
             _ => stmt.clone(),
         }
@@ -110,17 +117,24 @@ impl Desugarer {
     /// Desugar an expression
     pub fn desugar_expression(&mut self, expr: &HirExpression) -> HirExpression {
         match expr {
-            HirExpression::Integer(val) => {
-                HirExpression::Integer(*val)
+            HirExpression::Integer(val, loc) => {
+                HirExpression::Integer(*val, loc.clone())
             },
             
-            HirExpression::Variable(name, typ) => {
-                HirExpression::Variable(name.clone(), typ.clone())
+            HirExpression::Boolean(val) => {
+                HirExpression::Boolean(*val)
+            },
+            
+            HirExpression::String(val) => {
+                HirExpression::String(val.clone())
+            },
+            
+            HirExpression::Variable(name, typ, loc) => {
+                HirExpression::Variable(name.clone(), typ.clone(), loc.clone())
             },
             
             HirExpression::Binary { left, operator, right, result_type } => {
                 // Desugar nested binary expressions
-                // For example, convert complex chains of operations to simpler ones
                 let desugared_left = Box::new(self.desugar_expression(left));
                 let desugared_right = Box::new(self.desugar_expression(right));
                 
@@ -146,6 +160,22 @@ impl Desugarer {
                 }
             },
             
+            HirExpression::Conditional { condition, then_expr, else_expr, result_type } => {
+                HirExpression::Conditional {
+                    condition: Box::new(self.desugar_expression(condition)),
+                    then_expr: Box::new(self.desugar_expression(then_expr)),
+                    else_expr: Box::new(self.desugar_expression(else_expr)),
+                    result_type: result_type.clone(),
+                }
+            },
+            
+            HirExpression::Cast { expr, target_type } => {
+                HirExpression::Cast {
+                    expr: Box::new(self.desugar_expression(expr)),
+                    target_type: target_type.clone(),
+                }
+            },
+            
             HirExpression::Peak(expr) => {
                 HirExpression::Peak(Box::new(self.desugar_expression(expr)))
             },
@@ -153,9 +183,6 @@ impl Desugarer {
             HirExpression::Clone(expr) => {
                 HirExpression::Clone(Box::new(self.desugar_expression(expr)))
             },
-            
-            // Handle any other expression types - just return as is
-            _ => expr.clone(),
         }
     }
 }

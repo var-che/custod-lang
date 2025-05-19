@@ -96,8 +96,10 @@ pub fn check_undeclared_variables(program: &HirProgram) -> Result<(), Vec<Valida
             HirStatement::Expression(expr) => {
                 check_expr_for_undeclared(expr, &declared_vars, &mut errors);
             },
-            HirStatement::Return(expr) => {
-                check_expr_for_undeclared(expr, &declared_vars, &mut errors);
+            HirStatement::Return(expr_opt) => {
+                if let Some(expr) = expr_opt {
+                    check_expr_for_undeclared(expr, &declared_vars, &mut errors);
+                }
             },
             HirStatement::Print(expr) => {
                 check_expr_for_undeclared(expr, &declared_vars, &mut errors);
@@ -160,22 +162,24 @@ fn check_statement_types(stmt: &HirStatement, program: &HirProgram, errors: &mut
                 }
             }
         },
-        HirStatement::Return(expr) => {
+        HirStatement::Return(expr_opt) => {
             // Find the enclosing function (simplified - in a real compiler we'd track scope)
             // For now, just use the first function we find with a matching return type
-            for stmt in &program.statements {
-                if let HirStatement::Function(func) = stmt {
-                    if let Some(return_type) = &func.return_type {
-                        let expr_type = infer_expr_type(expr, program);
-                        if expr_type != *return_type {
-                            errors.push(ValidationError::TypeMismatch {
-                                expected: return_type.clone(),
-                                actual: expr_type,
-                                context: format!("return value in function '{}'", func.name),
-                            });
+            if let Some(expr) = expr_opt {
+                for stmt in &program.statements {
+                    if let HirStatement::Function(func) = stmt {
+                        if let Some(return_type) = &func.return_type {
+                            let expr_type = infer_expr_type(expr, program);
+                            if expr_type != *return_type {
+                                errors.push(ValidationError::TypeMismatch {
+                                    expected: return_type.clone(),
+                                    actual: expr_type,
+                                    context: format!("return value in function '{}'", func.name),
+                                });
+                            }
                         }
+                        break;
                     }
-                    break;
                 }
             }
         },
@@ -203,7 +207,7 @@ fn check_expr_for_undeclared(
     errors: &mut Vec<ValidationError>
 ) {
     match expr {
-        HirExpression::Variable(name, _) => {
+        HirExpression::Variable(name, _, _) => {
             if !declared.contains(name) {
                 errors.push(ValidationError::UndefinedVariable {
                     name: name.clone(),
@@ -220,22 +224,35 @@ fn check_expr_for_undeclared(
                 check_expr_for_undeclared(arg, declared, errors);
             }
         },
+        HirExpression::Conditional { condition, then_expr, else_expr, .. } => {
+            check_expr_for_undeclared(condition, declared, errors);
+            check_expr_for_undeclared(then_expr, declared, errors);
+            check_expr_for_undeclared(else_expr, declared, errors);
+        },
+        HirExpression::Cast { expr, .. } => {
+            check_expr_for_undeclared(expr, declared, errors);
+        },
         HirExpression::Peak(expr) => {
             check_expr_for_undeclared(expr, declared, errors);
         },
         HirExpression::Clone(expr) => {
             check_expr_for_undeclared(expr, declared, errors);
         },
-        _ => {}
+        // Literals don't contain variables to check
+        HirExpression::Integer(_, _) => {},
+        HirExpression::Boolean(_) => {},
+        HirExpression::String(_) => {},
     }
 }
+
+
 
 /// Infer the type of an expression
 fn infer_expr_type(expr: &HirExpression, program: &HirProgram) -> front_end::types::Type {
     match expr {
-        HirExpression::Integer(_) => front_end::types::Type::Int,
+        HirExpression::Integer(_, _) => front_end::types::Type::Int,
         
-        HirExpression::Variable(name, typ) => {
+        HirExpression::Variable(name, typ, _) => {
             // Look up in the type info first, fall back to the annotated type
             program.type_info.variables.get(name).cloned().unwrap_or_else(|| typ.clone())
         },
@@ -255,5 +272,14 @@ fn infer_expr_type(expr: &HirExpression, program: &HirProgram) -> front_end::typ
         HirExpression::Peak(inner) => infer_expr_type(inner, program),
         
         HirExpression::Clone(inner) => infer_expr_type(inner, program),
+        
+        // Add implementations for the new expression types
+        HirExpression::Boolean(_) => front_end::types::Type::Bool,
+        
+        HirExpression::String(_) => front_end::types::Type::String,
+        
+        HirExpression::Conditional { result_type, .. } => result_type.clone(),
+        
+        HirExpression::Cast { target_type, .. } => target_type.clone(),
     }
 }
