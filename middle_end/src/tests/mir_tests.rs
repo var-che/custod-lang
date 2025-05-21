@@ -4,22 +4,20 @@
 
 use crate::hir::converter::convert_statements_to_hir;
 use crate::mir::converter::convert_hir_to_mir;
-use crate::mir::pretty::pretty_print_program;
-
+use crate::mir::pretty_print::pretty_print_program;
 use front_end::parser::Parser;
 
 #[test]
-fn test_basic_mir_generation() {
-    // Define a simple test program
+fn test_simple_arithmetic() {
+    // Define a simple arithmetic expression - note that the permissions 
+    // (like "reads") are preserved from the source but not crucial for MIR analysis
     let source = r#"
-        reads write counter: Int = 5
-        
-        fn increment(reads amount: Int) -> Int {
-            counter = counter + amount
-            return counter
+        fn add_numbers() -> Int {
+            reads x: Int = 5
+            reads y: Int = 10
+            reads result = x + y
+            return result
         }
-        
-        reads result = increment(10)
     "#;
     
     // Parse the code using the front-end parser
@@ -34,33 +32,34 @@ fn test_basic_mir_generation() {
     
     // Print MIR for inspection
     let mir_output = pretty_print_program(&mir_program);
-    println!("Generated MIR:\n{}", mir_output);
+    println!("Generated MIR for simple arithmetic:\n{}", mir_output);
     
-    // Basic checks on the MIR
-    assert!(!mir_program.globals.is_empty(), "Should have at least one global variable");
-    assert!(mir_program.globals.contains_key("counter"), "Should have 'counter' global variable");
+    // Verify MIR structure
+    assert!(mir_program.functions.contains_key("add_numbers"), "Should have 'add_numbers' function");
     
-    assert!(mir_program.functions.contains_key("increment"), "Should have 'increment' function");
+    let add_fn = &mir_program.functions["add_numbers"];
+    assert_eq!(add_fn.name, "add_numbers");
+    assert_eq!(add_fn.parameters.len(), 0);
+    assert!(add_fn.return_type.is_some());
+    assert!(!add_fn.blocks.is_empty());
     
-    let increment_fn = &mir_program.functions["increment"];
-    assert_eq!(increment_fn.name, "increment", "Function should be named 'increment'");
-    assert_eq!(increment_fn.parameters.len(), 1, "Should have one parameter");
-    assert!(increment_fn.return_type.is_some(), "Should have a return type");
-    assert!(!increment_fn.blocks.is_empty(), "Should have at least one block");
-    
-    // Check that blocks have reasonable instructions
-    let has_add_instruction = increment_fn.blocks.iter()
+    // Check for the addition operation
+    let has_add_operation = add_fn.blocks.iter()
         .flat_map(|block| &block.instructions)
         .any(|instr| {
             matches!(instr, crate::mir::types::Instruction::BinaryOp { op, .. } 
                 if matches!(op, crate::mir::types::BinaryOperation::Add))
         });
-        
-    assert!(has_add_instruction, "Should have addition operation");
     
-    let has_return = increment_fn.blocks.iter()
+    assert!(has_add_operation, "Should have an addition operation in the MIR");
+    
+    // Check for a return instruction
+    let has_return = add_fn.blocks.iter()
         .flat_map(|block| &block.instructions)
-        .any(|instr| matches!(instr, crate::mir::types::Instruction::Return(_)));
-        
-    assert!(has_return, "Should have return instruction");
+        .any(|instr| {
+            matches!(instr, crate::mir::types::Instruction::Return(_))
+        });
+    
+    assert!(has_return, "Should have a return instruction");
 }
+

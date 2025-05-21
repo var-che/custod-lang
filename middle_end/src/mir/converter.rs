@@ -2,7 +2,8 @@
 //!
 //! This module provides the functionality to convert HIR to MIR.
 
-use crate::hir::types::{HirProgram, HirStatement, HirExpression, BinaryOperator};
+use crate::hir::types::{HirProgram, HirStatement, HirExpression};
+use front_end::token::TokenType; // Import TokenType which might be used as the binary operator
 use crate::mir::types::*;
 use std::collections::HashMap;
 
@@ -233,7 +234,7 @@ impl HirToMirConverter {
                 }
             },
             
-            HirExpression::Binary { left, operator, right, .. } => {
+            HirExpression::Binary { left, operator, right, result_type, .. } => {
                 // Convert the operands
                 let left_operand = self.convert_expression(left);
                 let right_operand = self.convert_expression(right);
@@ -243,7 +244,7 @@ impl HirToMirConverter {
                 let result_var = MirVariable {
                     id: result_id,
                     name: format!("temp_{}", result_id.0),
-                    typ: operator.result_type(left.get_type(), right.get_type()),
+                    typ: result_type.clone(), // Use the result_type directly from the expression
                 };
                 
                 // Add the variable to the function
@@ -251,20 +252,18 @@ impl HirToMirConverter {
                     func.variables.insert(result_id, result_var);
                 }
                 
-                // Convert the operator
+                // Convert the operator using TokenType instead of BinaryOperator
                 let mir_op = match operator {
-                    BinaryOperator::Add => BinaryOperation::Add,
-                    BinaryOperator::Subtract => BinaryOperation::Subtract,
-                    BinaryOperator::Multiply => BinaryOperation::Multiply,
-                    BinaryOperator::Divide => BinaryOperation::Divide,
-                    BinaryOperator::Equal => BinaryOperation::Equal,
-                    BinaryOperator::NotEqual => BinaryOperation::NotEqual,
-                    BinaryOperator::LessThan => BinaryOperation::LessThan,
-                    BinaryOperator::LessThanEqual => BinaryOperation::LessThanEqual,
-                    BinaryOperator::GreaterThan => BinaryOperation::GreaterThan,
-                    BinaryOperator::GreaterThanEqual => BinaryOperation::GreaterThanEqual,
-                    BinaryOperator::And => BinaryOperation::And,
-                    BinaryOperator::Or => BinaryOperation::Or,
+                    TokenType::Plus => BinaryOperation::Add,
+                    TokenType::Minus => BinaryOperation::Subtract,
+                    TokenType::Star => BinaryOperation::Multiply,
+                    TokenType::Slash => BinaryOperation::Divide,
+                    TokenType::EqualEqual => BinaryOperation::Equal,
+                    TokenType::BangEqual => BinaryOperation::NotEqual,
+                    TokenType::Less => BinaryOperation::LessThan,
+                    TokenType::LessEqual => BinaryOperation::LessThanEqual,
+                    TokenType::Greater => BinaryOperation::GreaterThan,
+                    TokenType::GreaterEqual => BinaryOperation::GreaterThanEqual,
                     // Any remaining operators
                     _ => {
                         println!("Warning: Unsupported binary operator encountered in MIR conversion");
@@ -316,36 +315,3 @@ impl HirExpression {
     }
 }
 
-// Add this helper method to BinaryOperator
-impl crate::hir::types::BinaryOperator {
-    /// Determine the result type of this binary operation
-    fn result_type(&self, left_type: front_end::types::Type, right_type: front_end::types::Type) -> front_end::types::Type {
-        match self {
-            crate::hir::types::BinaryOperator::Add |
-            crate::hir::types::BinaryOperator::Subtract |
-            crate::hir::types::BinaryOperator::Multiply |
-            crate::hir::types::BinaryOperator::Divide => {
-                // Numeric operations preserve the type
-                if left_type == front_end::types::Type::Float || right_type == front_end::types::Type::Float {
-                    front_end::types::Type::Float
-                } else {
-                    front_end::types::Type::Int
-                }
-            },
-            crate::hir::types::BinaryOperator::Equal |
-            crate::hir::types::BinaryOperator::NotEqual |
-            crate::hir::types::BinaryOperator::LessThan |
-            crate::hir::types::BinaryOperator::LessThanEqual |
-            crate::hir::types::BinaryOperator::GreaterThan |
-            crate::hir::types::BinaryOperator::GreaterThanEqual => {
-                // Comparison operations always result in a boolean
-                front_end::types::Type::Bool
-            },
-            crate::hir::types::BinaryOperator::And |
-            crate::hir::types::BinaryOperator::Or => {
-                // Logical operations work on and produce booleans
-                front_end::types::Type::Bool
-            },
-        }
-    }
-}
