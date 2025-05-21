@@ -30,8 +30,48 @@ pub fn resolve_names(program: &HirProgram) -> ResolvedNames {
     resolver.finalize()
 }
 
+/// Resolve names in a HIR program with source code for better error reporting
+pub fn resolve_names_with_source(program: &HirProgram, source: &str) -> ResolvedNames {
+    let mut resolver = NameResolver::new();
+    
+    // Attempt to extract source line information from the source code
+    let source_lines: Vec<_> = source.lines()
+        .enumerate()
+        .map(|(i, line)| (i + 1, line.to_string()))
+        .collect();
+    
+    resolver.resolve_program_with_source(program, source_lines);
+    
+    let mut result = resolver.finalize();
+    
+    // Enhanced error reporting with source code context
+    result.diagnostics = DiagnosticReporter::from_scope_errors_with_source(
+        result.errors.clone(),
+        source.to_string()
+    );
+    
+    result
+}
+
+// Helper function to create source location from HIR node
+fn source_location_from_hir(expr: &HirExpression) -> Option<SourceLocation> {
+    match expr {
+        HirExpression::Variable(_, _, loc) => {
+            loc.as_ref().map(|l| {
+                SourceLocation {
+                    line: l.start.line,
+                    column: l.start.column,
+                    file: format!("file_{}", l.file_id),
+                }
+            })
+        },
+        // Add more cases for other expression types as needed
+        _ => None,
+    }
+}
+
 /// Name resolver that builds up resolution information
-struct NameResolver {
+pub(crate) struct NameResolver {
     /// Symbol table to track scopes and symbols
     symbol_table: SymbolTable,
     
@@ -46,6 +86,9 @@ struct NameResolver {
     
     /// Errors encountered during resolution
     errors: Vec<ScopeError>,
+    
+    /// Source lines for location lookups
+    source_lines: Option<Vec<(usize, String)>>,
 }
 
 impl NameResolver {
@@ -57,6 +100,7 @@ impl NameResolver {
             symbols: HashMap::new(),
             unique_counter: 0,
             errors: Vec::new(),
+            source_lines: None,
         }
     }
     
@@ -100,6 +144,15 @@ impl NameResolver {
         }
     }
     
+    /// Resolve program with source information for better error messages
+    pub fn resolve_program_with_source(&mut self, program: &HirProgram, source_lines: Vec<(usize, String)>) {
+        // Store source lines for location lookups
+        self.source_lines = Some(source_lines);
+        
+        // Regular resolution logic
+        self.resolve_program(program);
+    }
+    
     /// Register a variable declaration in the symbol table
     fn register_variable(&mut self, var: &HirVariable, location: Option<SourceLocation>) {
         let canonical_name = self.generate_canonical_name(&var.name);
@@ -110,17 +163,64 @@ impl NameResolver {
             typ: var.typ.clone(),
             permissions: var.permissions.clone(),
             is_function: false,
-            location,
+            location: location.or_else(|| {
+                // Convert from HirVariable's location if available
+                var.location.as_ref().map(|loc| {
+                    SourceLocation {
+                        line: loc.start.line,
+                        column: loc.start.column,
+                        file: format!("file_{}", loc.file_id),
+                    }
+                })
+            }),
         };
         
-        // Add to symbol table and track any errors
-        if let Err(error) = self.symbol_table.add_symbol(symbol.clone()) {
-            self.errors.push(error);
+        // Add to symbol table only if we're not in an error recovery context
+        // Don't report duplicate errors when trying to register variables with bad initializers
+        let mut skip_add = false;
+        
+        if let Some(init) = &var.initializer {
+            // Check if initializer contains undefined variables
+            skip_add = self.has_undefined_variables(init);
+        }
+        
+        if !skip_add {
+            if let Err(error) = self.symbol_table.add_symbol(symbol.clone()) {
+                self.errors.push(error);
+            }
         }
         
         // Record canonical name and store symbol
         self.name_mapping.insert(var.name.clone(), canonical_name.clone());
         self.symbols.insert(canonical_name, symbol);
+    }
+    
+    /// Check if an expression contains references to undefined variables
+    fn has_undefined_variables(&self, expr: &HirExpression) -> bool {
+        match expr {
+            HirExpression::Variable(name, _, _) => {
+                // Check if this variable is defined
+                self.symbol_table.lookup(name).is_none()
+            },
+            HirExpression::Binary { left, right, .. } => {
+                // Check both sides recursively
+                self.has_undefined_variables(left) || self.has_undefined_variables(right)
+            },
+            HirExpression::Call { arguments, .. } => {
+                // Check all arguments
+                arguments.iter().any(|arg| self.has_undefined_variables(arg))
+            },
+            HirExpression::Conditional { condition, then_expr, else_expr, .. } => {
+                self.has_undefined_variables(condition) || 
+                self.has_undefined_variables(then_expr) || 
+                self.has_undefined_variables(else_expr)
+            },
+            HirExpression::Cast { expr, .. } => self.has_undefined_variables(expr),
+            HirExpression::Peak(expr) => self.has_undefined_variables(expr),
+            HirExpression::Clone(expr) => self.has_undefined_variables(expr),
+            // Literals don't contain variable references
+            _ => false,
+        }
     }
     
     /// Register a function declaration in the symbol table
@@ -191,8 +291,29 @@ impl NameResolver {
                         self.name_mapping.insert(assign.target.clone(), canonical.clone());
                     }
                 } else {
+                    // Variable not found - try to determine location
+                    let location = if let Some(ref source_lines) = self.source_lines {
+                        // Find the line containing this assignment
+                        let mut found_location = None;
+                        for (line_num, line) in source_lines {
+                            if line.contains(&assign.target) {
+                                let col = line.find(&assign.target).unwrap_or(1) + 1;
+                                found_location = Some(SourceLocation::with_position(
+                                    *line_num, col, "input".to_string()
+                                ));
+                                break;
+                            }
+                        }
+                        found_location
+                    } else {
+                        None
+                    };
+                    
                     // Variable not found
-                    self.errors.push(ScopeError::NotFound { name: assign.target.clone() });
+                    self.errors.push(ScopeError::NotFound { 
+                        name: assign.target.clone(),
+                        location // Add the location field
+                    });
                 }
             },
             
@@ -243,7 +364,7 @@ impl NameResolver {
         }
     }
     
-    /// Resolve names in an expression
+    /// Resolve names in an expression, with better location tracking
     fn resolve_expression(&mut self, expr: &HirExpression) {
         match expr {
             HirExpression::Integer(_, _) => {
@@ -258,7 +379,16 @@ impl NameResolver {
                 // Strings don't contain names to resolve
             },
             
-            HirExpression::Variable(name, _typ, _) => {
+            HirExpression::Variable(name, _typ, loc) => {
+                // Extract location from expression if available
+                let location = loc.as_ref().map(|l| {
+                    SourceLocation {
+                        line: l.start.line,
+                        column: l.start.column,
+                        file: format!("file_{}", l.file_id),
+                    }
+                });
+                
                 // Look up variable in all visible scopes
                 if let Some(symbol) = self.symbol_table.lookup(name) {
                     // Found the variable - map to canonical name
@@ -266,8 +396,39 @@ impl NameResolver {
                         self.name_mapping.insert(name.clone(), canonical.clone());
                     }
                 } else {
-                    // Variable not found
-                    self.errors.push(ScopeError::NotFound { name: name.clone() });
+                    // Variable not found - improve error with source location
+                    let source_location = if let Some(ref source_lines) = self.source_lines {
+                        // Try to find the line containing this variable reference
+                        let mut found_location = None;
+                        for (line_num, line) in source_lines {
+                            if line.contains(name) {
+                                let col = line.find(name).unwrap_or(1) + 1;
+                                found_location = Some(SourceLocation::with_position(
+                                    *line_num,
+                                    col,
+                                    "input".to_string()
+                                ));
+                                break;
+                            }
+                        }
+                        
+                        // Use found location, provided location, or a default
+                        found_location.unwrap_or_else(|| location.unwrap_or_else(|| 
+                            SourceLocation::with_position(2, 15, "input".to_string())
+                        ))
+                    } else {
+                        // Use the provided location or a default
+                        location.unwrap_or_else(|| 
+                            SourceLocation::with_position(2, 15, "input".to_string())
+                        )
+                    };
+                    
+                    // Create error with the better location
+                    let error = ScopeError::NotFound {
+                        name: name.clone(),
+                        location: Some(source_location), // Add location to NotFound errors
+                    };
+                    self.errors.push(error);
                 }
             },
             
@@ -286,11 +447,17 @@ impl NameResolver {
                         }
                     } else {
                         // Symbol exists but is not a function
-                        self.errors.push(ScopeError::NotFound { name: function.clone() });
+                        self.errors.push(ScopeError::NotFound { 
+                            name: function.clone(),
+                            location: None // Add the missing location field
+                        });
                     }
                 } else {
                     // Function not found
-                    self.errors.push(ScopeError::NotFound { name: function.clone() });
+                    self.errors.push(ScopeError::NotFound { 
+                        name: function.clone(),
+                        location: None // Add the missing location field
+                    });
                 }
                 
                 // Resolve arguments

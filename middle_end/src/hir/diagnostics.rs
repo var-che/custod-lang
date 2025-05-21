@@ -41,6 +41,9 @@ pub struct Diagnostic {
     
     /// Related diagnostic messages
     pub notes: Vec<Diagnostic>,
+    
+    /// Source code context (line with error highlighted)
+    pub context: Option<String>,
 }
 
 impl Diagnostic {
@@ -53,6 +56,7 @@ impl Diagnostic {
             location: None,
             suggestion: None,
             notes: Vec::new(),
+            context: None, // Add this field
         }
     }
     
@@ -65,6 +69,20 @@ impl Diagnostic {
             location: None,
             suggestion: None,
             notes: Vec::new(),
+            context: None, // Add this field
+        }
+    }
+    
+    /// Create a new note diagnostic
+    pub fn note(message: impl Into<String>) -> Self {
+        Self {
+            level: DiagnosticLevel::Note,
+            message: message.into(),
+            details: None,
+            location: None,
+            suggestion: None,
+            notes: Vec::new(),
+            context: None, // Add this field
         }
     }
     
@@ -91,42 +109,47 @@ impl Diagnostic {
         self.notes.push(note);
         self
     }
+    
+    /// Add source code context to the diagnostic
+    pub fn with_context(mut self, context: String) -> Self {
+        self.context = Some(context);
+        self
+    }
 }
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Format level prefix
+        // Format level prefix and message more concisely
         match self.level {
             DiagnosticLevel::Error => write!(f, "error: ")?,
             DiagnosticLevel::Warning => write!(f, "warning: ")?,
             DiagnosticLevel::Hint => write!(f, "hint: ")?,
             DiagnosticLevel::Note => write!(f, "note: ")?,
         }
-        
-        // Write the main message
         writeln!(f, "{}", self.message)?;
         
-        // Write location if available
+        // Write location and source context if available
         if let Some(loc) = &self.location {
-            writeln!(f, " --> {}:{}:{}",
-                    loc.file, 
-                    loc.line,
-                    loc.column)?;
+            writeln!(f, " --> {}:{}:{}", loc.file, loc.line, loc.column)?;
+            
+            if let Some(context) = &self.context {
+                write!(f, "{}", context)?;
+            }
         }
         
-        // Write detailed explanation if available
+        // Write details if available (optional)
         if let Some(details) = &self.details {
-            writeln!(f, "\n{}", details)?;
+            writeln!(f, "{}", details)?;
         }
         
-        // Write suggestion if available
+        // Write suggestion in a more concise format
         if let Some(suggestion) = &self.suggestion {
-            writeln!(f, "\nsuggestion: {}", suggestion)?;
+            writeln!(f, "suggestion: {}", suggestion)?;
         }
         
-        // Write related notes
+        // Write related notes (if any)
         for note in &self.notes {
-            write!(f, "\n{}", note)?;
+            write!(f, "{}", note)?;
         }
         
         Ok(())
@@ -134,7 +157,7 @@ impl fmt::Display for Diagnostic {
 }
 
 /// A reporter that collects diagnostics
-#[derive(Debug)]  // Add Debug trait implementation
+#[derive(Debug)]
 pub struct DiagnosticReporter {
     /// All diagnostics collected
     pub diagnostics: Vec<Diagnostic>,
@@ -144,6 +167,9 @@ pub struct DiagnosticReporter {
     
     /// Count of warnings
     pub warning_count: usize,
+    
+    /// Source code for context in error messages
+    pub source_code: Option<String>,
 }
 
 impl DiagnosticReporter {
@@ -153,12 +179,28 @@ impl DiagnosticReporter {
             diagnostics: Vec::new(),
             error_count: 0,
             warning_count: 0,
+            source_code: None,
         }
+    }
+    
+    /// Create a new reporter with source code information
+    pub fn with_source(source: &str) -> Self {
+        let mut reporter = Self::new();
+        reporter.source_code = Some(source.to_string());
+        reporter
     }
     
     /// Create a new reporter from scope errors
     pub fn from_scope_errors(scope_errors: Vec<ScopeError>) -> Self {
         let mut reporter = Self::new();
+        reporter.add_scope_errors(&scope_errors);
+        reporter
+    }
+    
+    /// Create from scope errors with source code
+    pub fn from_scope_errors_with_source(scope_errors: Vec<ScopeError>, source: String) -> Self {
+        let mut reporter = Self::new();
+        reporter.source_code = Some(source);
         reporter.add_scope_errors(&scope_errors);
         reporter
     }
@@ -188,42 +230,111 @@ impl DiagnosticReporter {
         output
     }
     
-    /// Convert scope errors to diagnostics
+    /// Add scope errors to diagnostics with improved formatting
     pub fn add_scope_errors(&mut self, errors: &[ScopeError]) {
         for error in errors {
             match error {
+                ScopeError::NotFound { name, location } => {
+                    // Get location information
+                    let loc = location.clone().unwrap_or_else(|| 
+                        SourceLocation { line: 1, column: 1, file: "input".to_string() }
+                    );
+                    
+                    // Create a more concise error message
+                    let mut diag = Diagnostic::error(format!("Cannot find '{}' in this scope", name));
+                    
+                    // Add location
+                    diag = diag.with_location(loc.clone());
+                    
+                    // Extract code context
+                    if let Some(context) = self.extract_code_context(loc.line, loc.column) {
+                        diag = diag.with_context(context);
+                    }
+                    
+                    // Add suggestion
+                    diag = diag.with_suggestion(format!("Make sure '{}' is declared before use", name));
+                    
+                    self.add(diag);
+                },
                 ScopeError::AlreadyDefined { name, previous } => {
-                    let mut diag = Diagnostic::error(format!("'{}' is already defined", name))
-                        .with_suggestion(format!("Consider using a different name for this variable"));
+                    let location = previous.clone().unwrap_or_else(|| 
+                        SourceLocation { line: 1, column: 1, file: "unknown".to_string() }
+                    );
+                    
+                    let mut diag = Diagnostic::error(format!("Variable '{}' is already defined", name))
+                        .with_suggestion(format!("Consider using a different name, such as '{}_2'", name))
+                        .with_location(location.clone());
                         
-                    if let Some(loc) = previous {
-                        let note = Diagnostic::note(format!("'{}' was previously defined here", name))
-                            .with_location(loc.clone());
-                        diag = diag.with_note(note);
+                    if let Some(context) = self.extract_code_context(location.line, location.column) {
+                        diag = diag.with_context(context);
                     }
                     
                     self.add(diag);
                 },
-                
                 ScopeError::Shadowing { name, previous } => {
-                    let mut diag = Diagnostic::warning(format!("'{}' shadows a previous definition", name))
-                        .with_suggestion(format!("Consider renaming this variable to avoid confusion"));
+                    let location = previous.clone().unwrap_or_else(|| 
+                        SourceLocation { line: 1, column: 1, file: "unknown".to_string() }
+                    );
+                    
+                    let mut diag = Diagnostic::warning(format!("Variable '{}' shadows a previous definition", name))
+                        .with_suggestion(format!("Consider renaming to avoid confusion"))
+                        .with_location(location.clone());
                         
-                    if let Some(loc) = previous {
-                        let note = Diagnostic::note(format!("Previous definition is here"))
-                            .with_location(loc.clone());
-                        diag = diag.with_note(note);
+                    if let Some(context) = self.extract_code_context(location.line, location.column) {
+                        diag = diag.with_context(context);
                     }
                     
                     self.add(diag);
-                },
-                
-                ScopeError::NotFound { name } => {
-                    self.add(Diagnostic::error(format!("Cannot find '{}' in this scope", name))
-                        .with_suggestion(format!("Make sure '{}' is declared before use", name)));
                 },
             }
         }
+    }
+    
+    /// Improve error display with source code context
+    pub fn add_scope_errors_with_source(&mut self, errors: &[ScopeError], source: &str) {
+        self.source_code = Some(source.to_string());
+        self.add_scope_errors(errors);
+    }
+    
+    /// Extract source code context for a given line and column - improved formatting
+    fn extract_code_context(&self, line: usize, column: usize) -> Option<String> {
+        if let Some(source) = &self.source_code {
+            let lines: Vec<&str> = source.lines().collect();
+            
+            // Find the actual line index (adjusting for blank lines at start)
+            let mut actual_line = line;
+            if actual_line >= lines.len() {
+                // If line is out of range, look for the nearest valid line
+                for i in (0..lines.len()).rev() {
+                    if !lines[i].trim().is_empty() {
+                        actual_line = i + 1;  // Convert to 1-based line number
+                        break;
+                    }
+                }
+            }
+            
+            // Ensure we're within bounds and adjust for 0-based indexing
+            let index = actual_line.saturating_sub(1);
+            if index < lines.len() {
+                let line_content = lines[index].trim_start(); // Remove leading whitespace
+                
+                // Format the line with just the number and content - more concise
+                let mut result = format!("{} | {}\n", actual_line, line_content);
+                
+                // Calculate tilde position & length
+                let adjusted_col = column.saturating_sub(lines[index].len() - line_content.len());
+                let token_len = extract_token_length(line_content, adjusted_col.saturating_sub(1));
+                
+                // Just show the tilde underline with no extra padding
+                result.push_str(&format!("    {}{}\n", 
+                    " ".repeat(adjusted_col.saturating_sub(1)), 
+                    "~".repeat(token_len)
+                ));
+                
+                return Some(result);
+            }
+        }
+        None
     }
     
     /// Check if any errors were reported
@@ -232,16 +343,23 @@ impl DiagnosticReporter {
     }
 }
 
-impl Diagnostic {
-    /// Create a new note diagnostic
-    pub fn note(message: impl Into<String>) -> Self {
-        Self {
-            level: DiagnosticLevel::Note,
-            message: message.into(),
-            details: None,
-            location: None,
-            suggestion: None,
-            notes: Vec::new(),
-        }
+/// Helper function to calculate token length
+fn extract_token_length(text: &str, pos: usize) -> usize {
+    if pos >= text.len() {
+        return 1;
     }
+    
+    // Try to find the token length
+    let mut end = pos;
+    while end < text.len() && is_token_char(text.chars().nth(end).unwrap_or(' ')) {
+        end += 1;
+    }
+    
+    // Ensure we return at least 1 for length
+    (end - pos).max(1)
+}
+
+/// Helper function to check if a character is part of a token/identifier
+fn is_token_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }

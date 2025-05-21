@@ -5,6 +5,7 @@
 //! Intermediate Representation).
 
 pub mod hir;
+pub mod mir;
 
 #[cfg(test)]
 mod tests;

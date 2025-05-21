@@ -18,8 +18,8 @@ pub mod function_analysis; // Add the new module
 // Re-export key functions and types
 pub use types::{HirProgram, HirStatement, HirExpression};
 pub use converter::{convert_ast_to_hir, convert_statements_to_hir};
-pub use name_resolver::resolve_names;
-pub use validation::validate_hir;
+pub use name_resolver::{resolve_names, resolve_names_with_source}; // Add the new function
+pub use validation::ValidationError;
 pub use desugar::desugar_program;
 pub use const_fold::fold_constants;
 pub use dce::eliminate_dead_code;

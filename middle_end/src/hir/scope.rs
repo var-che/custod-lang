@@ -43,6 +43,39 @@ impl SourceLocation {
             file: format!("file_{}", loc.file_id), // Create a file name from file_id
         }
     }
+    
+    /// Creates a new source location with specific position information
+    /// This helps create more accurate error messages
+    pub fn with_position(line: usize, column: usize, file: String) -> Self {
+        Self {
+            line,
+            column, 
+            file
+        }
+    }
+    
+    /// Create a source location from source code and token position
+    pub fn from_source_position(source: &str, pos: usize) -> Self {
+        // Count lines up to the position
+        let mut line = 1;
+        let mut line_start = 0;
+        
+        for (i, c) in source[..pos.min(source.len())].char_indices() {
+            if c == '\n' {
+                line += 1;
+                line_start = i + 1;
+            }
+        }
+        
+        // Calculate column (1-based)
+        let column = pos - line_start + 1;
+        
+        Self {
+            line,
+            column,
+            file: "input".to_string(),
+        }
+    }
 }
 
 /// A symbol in the symbol table
@@ -67,6 +100,14 @@ pub struct Symbol {
 /// Error information for scope and name resolution issues
 #[derive(Debug, Clone)]
 pub enum ScopeError {
+    /// Symbol not found in any scope
+    NotFound {
+        /// Symbol name
+        name: String,
+        /// Location of the reference (optional)
+        location: Option<SourceLocation>,
+    },
+    
     /// Symbol already defined in the current scope
     AlreadyDefined {
         /// Symbol name
@@ -83,12 +124,6 @@ pub enum ScopeError {
         
         /// Previous definition location
         previous: Option<SourceLocation>,
-    },
-    
-    /// Symbol not found in any scope
-    NotFound {
-        /// Symbol name
-        name: String,
     },
 }
 

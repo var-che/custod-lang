@@ -30,6 +30,9 @@ pub struct PermissionChecker {
     
     /// Errors found during permission checking
     errors: Vec<PermissionError>,
+    
+    /// Track variable locations
+    locations: HashMap<String, (usize, usize)>, // (line, column)
 }
 
 impl PermissionChecker {
@@ -40,15 +43,46 @@ impl PermissionChecker {
             aliases: HashMap::new(),
             exclusive_access: HashMap::new(),
             errors: Vec::new(),
+            locations: HashMap::new(), // Add locations tracking
         }
     }
     
     /// Check permissions for a HIR program
     pub fn check_program(&mut self, program: &HirProgram) -> Vec<PermissionError> {
-        // Adapt to the structure that HirProgram actually has
-        // If it has 'statements' instead of 'items', use that
         for statement in &program.statements {
             self.check_statement(statement);
+        }
+        
+        self.errors.clone()
+    }
+    
+    /// Check program permissions with source code
+    pub fn check_program_with_source(&mut self, program: &HirProgram, source: &str) -> Vec<PermissionError> {
+        // Extract line information from source
+        let lines: Vec<&str> = source.lines().collect();
+        
+        // First collect all variable declarations and their permissions
+        for stmt in &program.statements {
+            match stmt {
+                HirStatement::Declaration(var) => {
+                    self.permissions.insert(var.name.clone(), var.permissions.clone());
+                    
+                    // Try to find the line containing this variable
+                    for (i, line) in lines.iter().enumerate() {
+                        if line.contains(&var.name) {
+                            let column = line.find(&var.name).unwrap_or(0) + 1;
+                            self.locations.insert(var.name.clone(), (i + 1, column));
+                            break;
+                        }
+                    }
+                },
+                _ => {}, // Handle other statement types appropriately
+            }
+        }
+        
+        // Then check all statements for permission violations
+        for stmt in &program.statements {
+            self.check_statement(stmt);
         }
         
         self.errors.clone()
@@ -165,18 +199,8 @@ impl PermissionChecker {
     /// Check permissions for an assignment
     fn check_assignment(&mut self, target: &str, value: &HirExpression) {
         // Check if target has write permission
-        if let Some(perms) = self.permissions.get(target) {
-            if !perms.contains(&Permission::Write) && !perms.contains(&Permission::Writes) {
-                self.errors.push(PermissionError {
-                    message: format!("Cannot write to '{}' - no write permission", target),
-                    location: None,
-                });
-            }
-        } else {
-            self.errors.push(PermissionError {
-                message: format!("Assignment to undefined variable '{}'", target),
-                location: None,
-            });
+        if !self.check_write_permission(target) {
+            return;
         }
         
         // Check value permissions
@@ -192,19 +216,7 @@ impl PermissionChecker {
             
             HirExpression::Variable(name, _, _) => {
                 // Check if variable has read permission
-                if let Some(perms) = self.permissions.get(name) {
-                    if !perms.contains(&Permission::Read) && !perms.contains(&Permission::Reads) {
-                        self.errors.push(PermissionError {
-                            message: format!("Cannot read from '{}' - no read permission", name),
-                            location: None,
-                        });
-                    }
-                } else {
-                    self.errors.push(PermissionError {
-                        message: format!("Reference to undefined variable '{}'", name),
-                        location: None,
-                    });
-                }
+                self.check_read_permission(name);
             },
             
             HirExpression::Binary { left, right, .. } => {
@@ -231,14 +243,7 @@ impl PermissionChecker {
             HirExpression::Peak(expr) => {
                 // For Peak, we need to check special permission rules
                 if let HirExpression::Variable(name, _, _) = &**expr {
-                    if let Some(perms) = self.permissions.get(name) {
-                        if !perms.contains(&Permission::Read) && !perms.contains(&Permission::Reads) {
-                            self.errors.push(PermissionError {
-                                message: format!("Cannot peak '{}' - requires read/reads permission", name),
-                                location: None,
-                            });
-                        }
-                    }
+                    self.check_peak_permission(name);
                 } else {
                     self.check_expression_permissions(expr);
                 }
@@ -252,106 +257,53 @@ impl PermissionChecker {
     
     /// Check for proper aliasing permissions
     fn check_aliasing(&mut self, target_name: &str, source_name: &str, target_perms: &[Permission]) {
-        if let Some(source_perms) = self.permissions.get(source_name) {
-            // Check for non-shareable permissions first
-            let source_has_read = source_perms.contains(&Permission::Read);
-            let source_has_write = source_perms.contains(&Permission::Write);
-            let source_has_reads = source_perms.contains(&Permission::Reads);
-            let source_has_writes = source_perms.contains(&Permission::Writes);
+        let (has_shareable_perm, source_perms) = self.check_aliasing_permission(source_name);
+        
+        if !has_shareable_perm {
+            return;
+        }
+        
+        // Check write permission conflicts
+        if target_perms.contains(&Permission::Write) {
+            let conflicting_aliases = self.aliases.get(source_name)
+                .map(|aliases| {
+                    aliases.iter()
+                        .filter(|&alias| alias != target_name)
+                        .filter_map(|alias| {
+                            self.permissions.get(alias).map(|perms| 
+                                (alias.clone(), perms.contains(&Permission::Write))
+                            )
+                        })
+                        .filter(|(_, has_write)| *has_write)
+                        .map(|(name, _)| name)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             
-            // Debug output for tests
-            if cfg!(test) {
-                println!("  Aliasing check: '{}' non-shareable={}", 
-                         source_name, 
-                         (source_has_read || source_has_write) && !(source_has_reads || source_has_writes));
-            }
-            
-            // Non-shareable permissions (read/write without reads/writes) can't be aliased
-            if (source_has_read || source_has_write) && !(source_has_reads || source_has_writes) {
+            for existing in &conflicting_aliases {
                 self.errors.push(PermissionError {
-                    message: format!(
-                        "Cannot create alias to '{}' - it has non-shareable permissions (read/write without reads/writes)",
-                        source_name
-                    ),
+                    message: format!("Cannot create write alias to '{}' - '{}' already has write permission", 
+                                   source_name, existing),
                     location: None,
                 });
-                return; // Early return after detecting non-shareable aliasing violation
             }
-            
-            // Check for exclusive access conflicts - add additional debug information
-            let is_exclusive = source_has_read && 
-                              source_has_write && 
-                              !source_has_reads && 
-                              !source_has_writes;
-                              
-            if cfg!(test) {
-                println!("  Aliasing check: '{}' exclusive={}", source_name, is_exclusive);
-                
-                if is_exclusive && target_perms.contains(&Permission::Write) {
-                    println!("  PERMISSION ERROR: Cannot create write alias to an exclusive variable");
-                }
-            }
-                              
-            if is_exclusive {
-                // Source has exclusive access - can't alias with write permission
-                if target_perms.contains(&Permission::Write) {
-                    self.errors.push(PermissionError {
-                        message: format!(
-                            "Cannot create write alias to '{}' - it has exclusive permissions (Read+Write without Reads/Writes)", 
-                            source_name
-                        ),
-                        location: None,
-                    });
-                }
-            }
-            
-            // Check write permission conflicts
-            if target_perms.contains(&Permission::Write) {
-                // Fix aliasing check to avoid borrowing conflicts
-                let conflicting_aliases = self.aliases.get(source_name)
-                    .map(|aliases| {
-                        aliases.iter()
-                            .filter(|&alias| alias != target_name)
-                            .filter_map(|alias| {
-                                self.permissions.get(alias).map(|perms| 
-                                    (alias.clone(), perms.contains(&Permission::Write))
-                                )
-                            })
-                            .filter(|(_, has_write)| *has_write)
-                            .map(|(name, _)| name)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                
-                for existing in &conflicting_aliases {
-                    self.errors.push(PermissionError {
-                        message: format!("Cannot create write alias to '{}' - '{}' already has write permission", 
-                                       source_name, existing),
-                        location: None,
-                    });
-                }
-            }
-            
-            // Update alias sets safely
-            // First collect all the alias information
-            let source_aliases = self.aliases.get(source_name).cloned().unwrap_or_default();
-            
-            // Update target's alias set
-            let mut updated_set = source_aliases.clone();
-            updated_set.insert(target_name.to_string());
-            self.aliases.insert(target_name.to_string(), updated_set.clone());
-            
-            // Update source's alias set
-            if let Some(source_set) = self.aliases.get_mut(source_name) {
-                source_set.insert(target_name.to_string());
-            }
-            
-            // Update all other aliases to include the new alias
-            for alias in &source_aliases {
-                if alias != target_name && alias != source_name {
-                    if let Some(other_set) = self.aliases.get_mut(alias) {
-                        other_set.insert(target_name.to_string());
-                    }
+        }
+        
+        // Update alias sets safely
+        let source_aliases = self.aliases.get(source_name).cloned().unwrap_or_default();
+        
+        let mut updated_set = source_aliases.clone();
+        updated_set.insert(target_name.to_string());
+        self.aliases.insert(target_name.to_string(), updated_set.clone());
+        
+        if let Some(source_set) = self.aliases.get_mut(source_name) {
+            source_set.insert(target_name.to_string());
+        }
+        
+        for alias in &source_aliases {
+            if alias != target_name && alias != source_name {
+                if let Some(other_set) = self.aliases.get_mut(alias) {
+                    other_set.insert(target_name.to_string());
                 }
             }
         }
@@ -359,32 +311,20 @@ impl PermissionChecker {
     
     /// Check permissions for a function call expression
     pub fn check_function_call(&mut self, function_name: &str, arguments: &[HirExpression]) {
-        // Check permissions for each argument
         for arg in arguments {
             self.check_expression_permissions(arg);
         }
-        
-        // For a full implementation, we would:
-        // 1. Look up the function signature
-        // 2. Check if argument permissions are compatible with parameter requirements
-        // 3. Apply Pony-style reference capability conversion rules
-        
-        // This would be integrated with the FunctionPermissionsContext
     }
     
     /// Check if a variable can be passed to a parameter with given permissions
     pub fn check_parameter_compatibility(&mut self, var_name: &str, param_name: &str, param_perms: &[Permission]) {
         if let Some(var_perms) = self.permissions.get(var_name) {
-            // Check if the variable's permissions are compatible with parameter requirements
-            
-            // 1. If parameter needs exclusive access (read+write without reads/writes)
             let param_needs_exclusive = param_perms.contains(&Permission::Read) && 
                                        param_perms.contains(&Permission::Write) && 
                                        !param_perms.contains(&Permission::Reads) && 
                                        !param_perms.contains(&Permission::Writes);
                                        
             if param_needs_exclusive {
-                // Variable must have equivalent or stronger permissions
                 let var_has_exclusive = var_perms.contains(&Permission::Read) && 
                                        var_perms.contains(&Permission::Write) && 
                                        !var_perms.contains(&Permission::Reads) && 
@@ -399,7 +339,6 @@ impl PermissionChecker {
                 }
             }
             
-            // 2. If parameter needs read permission
             if (param_perms.contains(&Permission::Read) || param_perms.contains(&Permission::Reads))
                 && !var_perms.contains(&Permission::Read) && !var_perms.contains(&Permission::Reads) {
                 self.errors.push(PermissionError {
@@ -409,7 +348,6 @@ impl PermissionChecker {
                 });
             }
             
-            // 3. If parameter needs write permission
             if (param_perms.contains(&Permission::Write) || param_perms.contains(&Permission::Writes))
                 && !var_perms.contains(&Permission::Write) && !var_perms.contains(&Permission::Writes) {
                 self.errors.push(PermissionError {
@@ -419,9 +357,7 @@ impl PermissionChecker {
                 });
             }
             
-            // Check aliasing rules similar to Pony's reference capabilities
             if param_perms.contains(&Permission::Write) && !param_perms.contains(&Permission::Writes) {
-                // For non-shareable write parameters, check if the variable has aliases
                 if let Some(aliases) = self.aliases.get(var_name) {
                     if aliases.len() > 1 {
                         self.errors.push(PermissionError {
@@ -453,23 +389,12 @@ impl PermissionChecker {
         function_name: &str,
         param_index: usize
     ) -> Option<PermissionError> {
-        // In a real implementation, you'd look up the variable's actual permissions
-        // and check if they're compatible with the parameter permissions.
-        
-        // For now, just check if we're requiring exclusive permission
         let param_needs_exclusive = param_permissions.contains(&Permission::Read) && 
                                   param_permissions.contains(&Permission::Write) && 
                                   !param_permissions.contains(&Permission::Reads) && 
                                   !param_permissions.contains(&Permission::Writes);
         
         if param_needs_exclusive {
-            // Similar to Pony's iso capability, exclusive access parameters
-            // can only accept variables with exclusive access that aren't aliased.
-            
-            // This is a placeholder implementation. In a real implementation,
-            // you would check if the variable has proper exclusive permissions
-            // and is not aliased elsewhere.
-            
             return Some(PermissionError {
                 message: format!(
                     "Parameter {} of function '{}' requires exclusive permission (like Pony's iso), but this cannot be guaranteed for '{}'",
@@ -483,4 +408,184 @@ impl PermissionChecker {
         
         None
     }
+    
+    /// Check write permissions for an assignment
+    fn check_write_permission(&mut self, target: &str) -> bool {
+        match self.permissions.get(target) {
+            Some(perms) => {
+                let has_write = perms.contains(&Permission::Write) || perms.contains(&Permission::Writes);
+                if !has_write {
+                    let mut message = format!("Cannot write to '{}' - no write permission", target);
+                    
+                    if let Some(location) = self.locations.get(target) {
+                        message = format!("{} | x = y\n    ~ -> Cannot write to '{}' - no write permission", location.0, target);
+                        
+                        if perms.contains(&Permission::Reads) {
+                            message.push_str(&format!("\nsuggestion: reads write {} -> add write permission", target));
+                        } else if perms.contains(&Permission::Read) {
+                            message.push_str(&format!("\nsuggestion: read write {} -> add write permission", target));
+                        } else {
+                            message.push_str(&format!("\nsuggestion: write {} -> add write permission", target));
+                        }
+                    } else {
+                        if perms.contains(&Permission::Reads) {
+                            message.push_str(&format!("\n\nSuggestion:\nreads write {0}: Int = ...\n      ~~~~~ -> add write permission here", target));
+                        } else if perms.contains(&Permission::Read) {
+                            message.push_str(&format!("\n\nSuggestion:\nread write {0}: Int = ...\n     ~~~~~ -> add write permission here", target));
+                        } else {
+                            message.push_str(&format!("\n\nSuggestion:\nwrite {0}: Int = ...\n~~~~~ -> add write permission here", target));
+                        }
+                    }
+                    
+                    self.errors.push(PermissionError {
+                        message,
+                        location: None,
+                    });
+                }
+                has_write
+            },
+            None => {
+                self.errors.push(PermissionError {
+                    message: format!("Cannot write to '{}' - variable not found", target),
+                    location: None,
+                });
+                false
+            }
+        }
+    }
+
+    /// Check read permissions for variable access
+    fn check_read_permission(&mut self, target: &str) -> bool {
+        match self.permissions.get(target) {
+            Some(perms) => {
+                let has_read = perms.contains(&Permission::Read) || perms.contains(&Permission::Reads);
+                if !has_read {
+                    let mut message = format!("Cannot read from '{}' - no read permission", target);
+                    
+                    if let Some(location) = self.locations.get(target) {
+                        message = format!("{} | x = y\n    ~ -> Cannot read from '{}' - no read permission", location.0, target);
+                        
+                        if perms.contains(&Permission::Writes) {
+                            message.push_str(&format!("\nsuggestion: reads writes {} -> add reads permission", target));
+                        } else if perms.contains(&Permission::Write) {
+                            message.push_str(&format!("\nsuggestion: read write {} -> add read permission", target));
+                        } else {
+                            message.push_str(&format!("\nsuggestion: read {} -> add read permission", target));
+                        }
+                    } else {
+                        if perms.contains(&Permission::Writes) {
+                            message.push_str(&format!("\n\nSuggestion:\nreads writes {0}: Int = ...\n~~~~~ -> add reads permission here", target));
+                        } else if perms.contains(&Permission::Write) {
+                            message.push_str(&format!("\n\nSuggestion:\nread write {0}: Int = ...\n~~~~ -> add read permission here", target));
+                        } else {
+                            message.push_str(&format!("\n\nSuggestion:\nread {0}: Int = ...\n~~~~ -> add read permission here", target));
+                        }
+                    }
+                    
+                    self.errors.push(PermissionError {
+                        message,
+                        location: None,
+                    });
+                }
+                has_read
+            },
+            None => {
+                self.errors.push(PermissionError {
+                    message: format!("Cannot read from '{}' - variable not found", target),
+                    location: None,
+                });
+                false
+            }
+        }
+    }
+    
+    /// Check permissions for peak operation
+    fn check_peak_permission(&mut self, target: &str) -> bool {
+        match self.permissions.get(target) {
+            Some(perms) => {
+                let has_read = perms.contains(&Permission::Read) || perms.contains(&Permission::Reads);
+                if !has_read {
+                    let mut message = format!("Cannot peak '{}' - peak requires read permission", target);
+                    
+                    if let Some(location) = self.locations.get(target) {
+                        message = format!("{} | x = y\n    ~ -> Cannot peak '{}' - peak requires read permission", location.0, target);
+                        
+                        if perms.contains(&Permission::Write) {
+                            message.push_str(&format!("\nsuggestion: read write {} -> add read permission", target));
+                        } else if perms.contains(&Permission::Writes) {
+                            message.push_str(&format!("\nsuggestion: reads writes {} -> add reads permission", target));
+                        } else {
+                            message.push_str(&format!("\nsuggestion: read {} -> add read permission", target));
+                        }
+                    } else {
+                        if perms.contains(&Permission::Write) {
+                            message.push_str(&format!("\n\nSuggestion:\nread write {0}: Int = ...\n~~~~ -> add read permission here", target));
+                        } else if perms.contains(&Permission::Writes) {
+                            message.push_str(&format!("\n\nSuggestion:\nreads writes {0}: Int = ...\n~~~~~ -> add reads permission here", target));
+                        } else {
+                            message.push_str(&format!("\n\nSuggestion:\nread {0}: Int = ...\n~~~~ -> add read permission here", target));
+                        }
+                    }
+                    
+                    self.errors.push(PermissionError {
+                        message,
+                        location: None,
+                    });
+                }
+                has_read
+            },
+            None => {
+                self.errors.push(PermissionError {
+                    message: format!("Cannot peak '{}' - variable not found", target),
+                    location: None,
+                });
+                false
+            }
+        }
+    }
+    
+    /// Check if aliasing is allowed for a variable
+    fn check_aliasing_permission(&mut self, source: &str) -> (bool, Vec<Permission>) {
+        match self.permissions.get(source) {
+            Some(perms) => {
+                let has_shareable_perm = perms.iter().any(|p| 
+                    matches!(p, Permission::Reads | Permission::Writes)
+                );
+                
+                let has_read = perms.contains(&Permission::Read) || perms.contains(&Permission::Reads);
+                
+                if !has_shareable_perm && has_read {
+                    let mut message = format!("Cannot create alias to '{}' - variable has non-shareable permissions", source);
+                    
+                    if perms.contains(&Permission::Read) && perms.contains(&Permission::Write) {
+                        message.push_str(&format!("\nsuggestion: reads writes {} -> use shareable permissions instead of read write", source));
+                    } else if perms.contains(&Permission::Read) {
+                        message.push_str(&format!("\nsuggestion: reads {} -> use reads instead of read", source));
+                    } else if perms.contains(&Permission::Write) {
+                        message.push_str(&format!("\nsuggestion: writes {} -> use writes instead of write", source));
+                    }
+                    
+                    self.errors.push(PermissionError {
+                        message,
+                        location: None,
+                    });
+                }
+                
+                (has_shareable_perm, perms.clone())
+            },
+            None => {
+                self.errors.push(PermissionError {
+                    message: format!("Cannot alias '{}' - variable not found", source),
+                    location: None,
+                });
+                (false, vec![])
+            }
+        }
+    }
+}
+
+/// Create a new public function to check permissions with source code
+pub fn check_permissions_with_source(program: &HirProgram, source: &str) -> Vec<PermissionError> {
+    let mut checker = PermissionChecker::new();
+    checker.check_program_with_source(program, source)
 }
