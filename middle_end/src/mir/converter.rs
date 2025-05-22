@@ -283,6 +283,26 @@ impl HirToMirConverter {
                 Operand::Variable(result_id)
             },
             
+            HirExpression::Peak(inner) => {
+                // Bug fix: We should properly handle the peak operation here
+                // Currently it's assigning 0 instead of the value of inner
+                
+                // Get the operand for the inner expression
+                let inner_operand = self.convert_expression(inner);
+                
+                // Return the inner operand directly - this way we're "peaking" at the value
+                // Note: This creates a reference semantically but in MIR it looks like a read
+                inner_operand
+            },
+            
+            HirExpression::Clone(inner) => {
+                // Similar for Clone, but semantically this is a deep copy
+                // For primitive types like Int, the MIR representation is the same as Peak
+                // But for complex types, we would generate additional copy instructions
+                let inner_operand = self.convert_expression(inner);
+                inner_operand
+            },
+            
             // Handle other expression types as needed
             _ => {
                 // Default to a dummy constant for now
