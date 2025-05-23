@@ -75,14 +75,14 @@ impl FunctionPermissionsContext {
     pub fn analyze_program(&mut self, program: &HirProgram) -> Vec<PermissionError> {
         // First register all function signatures
         for stmt in &program.statements {
-            if let HirStatement::Function(func) = stmt {
+            if let HirStatement::Function(ref func) = stmt {
                 self.register_function(func);
             }
         }
         
         // Then analyze function bodies
         for stmt in &program.statements {
-            if let HirStatement::Function(func) = stmt {
+            if let HirStatement::Function(ref func) = stmt {
                 self.analyze_function_body(func);
             }
         }
