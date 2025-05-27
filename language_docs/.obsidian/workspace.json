@@ -102,8 +102,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 300
   },
   "right": {
     "id": "1bba21ea19c73092",
@@ -195,6 +194,7 @@
   },
   "active": "e44254dc73590857",
   "lastOpenFiles": [
+    "orca_gc_and_type_system_co-design_for_actor_languages.pdf",
     "Methods and behaviours.md",
     "Beginning.md",
     "Manifest.md",

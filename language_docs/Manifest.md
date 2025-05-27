@@ -1,5 +1,5 @@
 ```rust
-rw OR rs d = ({
+[permission] alias = ({
   // scoped block
   // we can use outside scope aliases that are `rs` only, meaning `reads`
 })
@@ -26,7 +26,7 @@ There are two types of permissions that are safe to toss around to actors:
 read write 
 reads
 ```
-`read write` or `rw` for short, is a single reference to some value.
+and now we are focusing on `read write` or `rw` for short, which is a single reference to some value.
 ```rust
 read write counter = 1
 ```
@@ -50,8 +50,43 @@ Delete the whole statement and let `counter` be the single owner of that value.
 ```
 ### reads write, or rsw
 A permission that allows many aliases to read into this value, but only single writer to the value.
+```rust
+reads write counter = 1
+read reader = peak counter
+counter += 1
+print(reader) // 2
+```
+or
+```rust
+rsw counter = 1
+r reader = peak counter
+counter += 1
+print(reader) // 2
+```
+When we want to attach the reader to some value, we have to explicitly use `peak` keyword, indicating that we want to read there. It increases the readability.
+### reads
+This is strictly immutable value that cannot be changed during the runtime, making it safe to send to other actors or use in the functions.
+```rust
+reads like_const = 1
+```
+Changing the value of it would cause an error:
+```rust
+r like_const = 1
+like_const += 1
+```
+throws a compilation time error:
+```
+Error: You cannot change read only value
 
-TODO
+2 | like_const += 1
+    ~~~~~~~~~~~~~~~ -> You are trying to write into read only value.
+
+Solution:
+Remove the whole line.
+
+2 | like_const += 1
+    ~~~~~~~~~~~~~~~ -> Remove this stuff.
+```
 
 # Types
 It is important to have statically defined types and inference system to detect them. 
